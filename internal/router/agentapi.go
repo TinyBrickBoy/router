@@ -137,10 +137,11 @@ func (s *Server) setupScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var buf bytes.Buffer
+	base := s.baseURL(s.Store.Get(), r)
 	err := setupTmpl.Execute(&buf, map[string]string{
-		"Server": s.baseURL(s.Store.Get(), r),
+		"Server": base,
 		"Token":  b.Token,
-		"Pin":    s.Pin,
+		"Pin":    s.pinFor(base),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), 500)
