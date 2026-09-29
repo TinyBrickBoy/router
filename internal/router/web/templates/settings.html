@@ -66,6 +66,8 @@
     <label>Client Secret {{if .S.Settings.OIDC.ClientSecret}}(gesetzt, leer lassen = unverändert){{end}}<input name="client_secret" type="password" autocomplete="off"></label>
     <label>Erlaubte Benutzer (E-Mail, Benutzername oder sub)<input name="allowed_users" value="{{.S.Settings.OIDC.AllowedUsers}}" placeholder="admin@example.com, max"></label>
     <label>Erlaubte Gruppen (groups Claim, optional)<input name="allowed_groups" value="{{.S.Settings.OIDC.AllowedGroups}}" placeholder="network-admins"></label>
+    <label>Nur lesende Benutzer (optional)<input name="viewer_users" value="{{.S.Settings.OIDC.ViewerUsers}}" placeholder="noc@example.com"></label>
+    <label>Nur lesende Gruppen (optional)<input name="viewer_groups" value="{{.S.Settings.OIDC.ViewerGroups}}" placeholder="noc"></label>
     <label class="check"><input type="checkbox" name="disable_password" {{if .S.Settings.OIDC.DisablePassword}}checked{{end}}> Passwort Login deaktivieren</label>
     {{if .S.Settings.OIDC.ClientSecret}}<label class="check"><input type="checkbox" name="clear_secret"> Client Secret löschen</label>{{end}}
     <p class="muted wide">Notfallzugang: <code>bgp-router passwd</code> auf dem VPS setzt ein neues Passwort und aktiviert den Passwort Login wieder.</p>
@@ -74,8 +76,51 @@
 </section>
 
 <section class="card">
-  <h2>Passwort ändern</h2>
-  <form method="post" action="/settings/password" class="grid-form">
+  <h2>Benutzer</h2>
+  <p class="muted">Admins dürfen alles, Viewer nur lesen. Der Hauptbenutzer ist immer Admin.</p>
+  <table>
+    <thead><tr><th>Name</th><th>Rolle</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>{{.S.Admin.Username}}</td><td>admin (Hauptbenutzer)</td><td></td></tr>
+      {{range .S.Users}}
+      <tr>
+        <td>{{.Username}}</td>
+        <td>
+          <form method="post" action="/settings/users/{{.Username}}/role" class="inline tight">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <select name="role" data-autosubmit>
+              <option value="admin" {{if eq .Role "admin"}}selected{{end}}>admin</option>
+              <option value="viewer" {{if ne .Role "admin"}}selected{{end}}>viewer</option>
+            </select>
+            <noscript><button>Ändern</button></noscript>
+          </form>
+          <span class="role">{{if eq .Role "admin"}}admin{{else}}viewer{{end}}</span>
+        </td>
+        <td class="actions">
+          <form method="post" action="/settings/users/{{.Username}}/password" class="inline tight">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <input type="password" name="password" placeholder="neues Passwort" minlength="8" autocomplete="new-password" required>
+            <button>Setzen</button>
+          </form>
+          <form method="post" action="/settings/users/{{.Username}}/delete" data-confirm="Benutzer {{.Username}} löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <form method="post" action="/settings/users" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Benutzername<input name="username" required></label>
+    <label>Passwort<input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
+    <label>Rolle<select name="role"><option value="viewer">viewer (nur lesen)</option><option value="admin">admin</option></select></label>
+    <div class="wide"><button class="primary">Benutzer anlegen</button></div>
+  </form>
+</section>
+
+{{if not .OIDCUser}}
+<section class="card">
+  <h2>Eigenes Passwort ändern ({{.User}})</h2>
+  <form method="post" action="/settings/password" class="grid-form self">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <label>Aktuelles Passwort<input type="password" name="current" autocomplete="current-password" required></label>
     <label>Neues Passwort<input type="password" name="new" autocomplete="new-password" minlength="8" required></label>
@@ -83,6 +128,7 @@
     <div class="wide"><button class="primary">Ändern</button></div>
   </form>
 </section>
+{{end}}
 {{end}}
 
 {{define "family"}}

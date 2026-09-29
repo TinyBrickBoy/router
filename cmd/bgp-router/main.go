@@ -236,6 +236,7 @@ func initState(st *store.Store, stateDir string) error {
 func passwd(args []string) {
 	fs := flag.NewFlagSet("passwd", flag.ExitOnError)
 	statePath := fs.String("state", "/var/lib/bgp-router/state.json", "zustandsdatei")
+	user := fs.String("user", "", "benutzer (standard: hauptbenutzer)")
 	_ = fs.Parse(args)
 	fmt.Print("neues passwort: ")
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -252,7 +253,13 @@ func passwd(args []string) {
 	}
 	if err := st.Update(func(s *store.State) error {
 		s.Settings.OIDC.DisablePassword = false // Notfallzugang bei OIDC Problemen
-		return router.SetPassword(&s.Admin, pw)
+		u := &s.Admin
+		if *user != "" {
+			if u = s.User(*user); u == nil {
+				return fmt.Errorf("benutzer %s nicht gefunden", *user)
+			}
+		}
+		return router.SetPassword(u, pw)
 	}); err != nil {
 		log.Fatal(err)
 	}

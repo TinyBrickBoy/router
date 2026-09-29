@@ -221,14 +221,14 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		fail("ID Token ungültig", err)
 		return
 	}
-	user, ok := oidcAllowed(claims, o)
+	user, role, ok := oidcAllowed(claims, o)
 	if !ok {
 		fail(fmt.Sprintf("Benutzer %q ist nicht freigeschaltet", user), nil)
 		return
 	}
 	s.logins.Reset(clientIP(r))
-	log.Printf("oidc login: %s (sub %s) von %s", user, claims.Sub, clientIP(r))
-	s.setSessionCookie(w, r, newSession(st), int(sessionTTL.Seconds()))
+	log.Printf("oidc login: %s (sub %s, %s) von %s", user, claims.Sub, role, clientIP(r))
+	s.setSessionCookie(w, r, newSession(st, session{User: user, Role: role, OIDC: true}), int(sessionTTL.Seconds()))
 	// Per HTML weiterleiten statt 303: sonst gilt die Weiterleitung als Teil der
 	// Cross-Site Navigation vom Provider und der SameSite=Strict Cookie fehlt.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -328,7 +328,8 @@ func splitList(v string) []string {
 }
 
 // oidcAllowed prüft Benutzer und Gruppen. Ohne Freigaben wird niemand eingelassen.
-func oidcAllowed(c idClaims, o store.OIDCSettings) (string, bool) {
+// oidcAllowed liefert Benutzername und Rolle. Admin Freigaben haben Vorrang.
+func oidcAllowed(c idClaims, o store.OIDCSettings) (string, string, bool) {
 	user := c.PreferredUsername
 	email := ""
 	if c.Email != "" && (c.EmailVerified == nil || *c.EmailVerified) {
@@ -340,19 +341,28 @@ func oidcAllowed(c idClaims, o store.OIDCSettings) (string, bool) {
 	if user == "" {
 		user = c.Sub
 	}
-	for _, a := range splitList(o.AllowedUsers) {
-		if a == c.Sub || (email != "" && strings.EqualFold(a, email)) || (c.PreferredUsername != "" && a == c.PreferredUsername) {
-			return user, true
-		}
-	}
-	for _, g := range splitList(o.AllowedGroups) {
-		for _, cg := range c.Groups {
-			if g == cg || "/"+g == cg {
-				return user, true
+	match := func(users, groups string) bool {
+		for _, a := range splitList(users) {
+			if a == c.Sub || (email != "" && strings.EqualFold(a, email)) || (c.PreferredUsername != "" && a == c.PreferredUsername) {
+				return true
 			}
 		}
+		for _, g := range splitList(groups) {
+			for _, cg := range c.Groups {
+				if g == cg || "/"+g == cg {
+					return true
+				}
+			}
+		}
+		return false
 	}
-	return user, false
+	switch {
+	case match(o.AllowedUsers, o.AllowedGroups):
+		return user, store.RoleAdmin, true
+	case match(o.ViewerUsers, o.ViewerGroups):
+		return user, store.RoleViewer, true
+	}
+	return user, "", false
 }
 
 func (s *Server) settingsOIDC(w http.ResponseWriter, r *http.Request) {
@@ -369,6 +379,8 @@ func (s *Server) settingsOIDC(w http.ResponseWriter, r *http.Request) {
 		}
 		o.AllowedUsers = strings.Join(splitList(r.FormValue("allowed_users")), ", ")
 		o.AllowedGroups = strings.Join(splitList(r.FormValue("allowed_groups")), ", ")
+		o.ViewerUsers = strings.Join(splitList(r.FormValue("viewer_users")), ", ")
+		o.ViewerGroups = strings.Join(splitList(r.FormValue("viewer_groups")), ", ")
 		o.DisablePassword = r.FormValue("disable_password") != ""
 		if !o.Enabled {
 			o.DisablePassword = false

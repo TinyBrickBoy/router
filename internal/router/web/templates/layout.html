@@ -8,7 +8,7 @@
 <script src="/static/app.js" defer></script>
 {{block "head" .}}{{end}}
 </head>
-<body>
+<body{{if and .CSRF (not .IsAdmin)}} class="readonly"{{end}}>
 {{if .CSRF}}
 <header class="top">
   <a class="brand" href="/">BGP Router</a>
@@ -22,6 +22,7 @@
   </nav>
   <form method="post" action="/logout" class="logout">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <span class="muted">{{.User}}{{if not .IsAdmin}} (nur lesen){{end}}</span>
     <button class="link">Abmelden</button>
   </form>
 </header>

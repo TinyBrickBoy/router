@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,9 @@ func TestSetupCommandHiddenWhileOnline(t *testing.T) {
 
 	page := func() string {
 		rec := httptest.NewRecorder()
-		s.backendsPage(rec, httptest.NewRequest("GET", "/backends", nil))
+		req := httptest.NewRequest("GET", "/backends", nil)
+		req = req.WithContext(context.WithValue(req.Context(), sessionCtxKey{}, session{User: "admin", Role: store.RoleAdmin}))
+		s.backendsPage(rec, req)
 		return rec.Body.String()
 	}
 	if !strings.Contains(page(), token) {

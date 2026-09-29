@@ -109,6 +109,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/rpki", a(s.settingsRPKI))
 	mux.HandleFunc("POST /settings/oidc", a(s.settingsOIDC))
 	mux.HandleFunc("POST /settings/password", a(s.settingsPassword))
+	mux.HandleFunc("POST /settings/users", a(s.userAdd))
+	mux.HandleFunc("POST /settings/users/{name}/delete", a(s.userDelete))
+	mux.HandleFunc("POST /settings/users/{name}/role", a(s.userRole))
+	mux.HandleFunc("POST /settings/users/{name}/password", a(s.userPassword))
 
 	mux.HandleFunc("GET /updates", a(s.updatesPage))
 	mux.HandleFunc("POST /updates/settings", a(s.updateSettings))
@@ -182,14 +186,17 @@ func (s *Server) parseTemplates() {
 }
 
 type page struct {
-	Title   string
-	Active  string
-	CSRF    string
-	Msg     string
-	Err     string
-	S       store.State
-	Version string
-	DryRun  bool
+	Title    string
+	Active   string
+	CSRF     string
+	Msg      string
+	Err      string
+	S        store.State
+	Version  string
+	DryRun   bool
+	User     string
+	IsAdmin  bool
+	OIDCUser bool
 
 	// Übersicht
 	LastApply  time.Time
@@ -210,10 +217,12 @@ type page struct {
 
 func (s *Server) newPage(r *http.Request, title, active string) *page {
 	st := s.Store.Get()
+	sess := currentSession(r)
 	return &page{
 		Title: title, Active: active, CSRF: csrfToken(st, r),
 		Msg: r.URL.Query().Get("msg"), Err: r.URL.Query().Get("err"),
 		S: st, Version: version.Version, DryRun: s.Runner.DryRun,
+		User: sess.User, IsAdmin: sess.Admin(), OIDCUser: sess.OIDC,
 	}
 }
 
@@ -269,9 +278,13 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := r.FormValue("username")
-	if constEq(user, st.Admin.Username) && checkPassword(st.Admin, r.FormValue("password")) {
+	u := st.User(user)
+	if u == nil {
+		u = &store.User{} // unbekannter Benutzer: checkPassword schlägt fehl
+	}
+	if checkPassword(*u, r.FormValue("password")) {
 		s.logins.Reset(ip)
-		s.setSessionCookie(w, r, newSession(st), int(sessionTTL.Seconds()))
+		s.setSessionCookie(w, r, newSession(st, session{User: u.Username}), int(sessionTTL.Seconds()))
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -284,8 +297,17 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 func constEq(a, b string) bool { return len(a) == len(b) && mac("x", a) == mac("x", b) }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	// Alle Sessions serverseitig ungültig machen (auch gestohlene Cookies)
-	if err := s.Store.Update(func(st *store.State) error { st.Admin.SessionEpoch++; return nil }); err != nil {
+	// Alle Sessions des Benutzers serverseitig ungültig machen (auch gestohlene Cookies)
+	sess := currentSession(r)
+	err := s.Store.Update(func(st *store.State) error {
+		if sess.OIDC {
+			st.OIDCEpoch++
+		} else if u := st.User(sess.User); u != nil {
+			u.SessionEpoch++
+		}
+		return nil
+	})
+	if err != nil {
 		log.Printf("logout: %v", err)
 	}
 	s.setSessionCookie(w, r, "", -1)
@@ -588,8 +610,8 @@ func (s *Server) backendsPage(w http.ResponseWriter, r *http.Request) {
 	p.Backends = s.backendViews(p.S)
 	base := s.baseURL(p.S, r)
 	for i := range p.Backends {
-		// Das Kommando enthält das geheime Token: bei laufendem Agent nicht ausliefern
-		if !p.Backends[i].Online {
+		// Das Kommando enthält das geheime Token: nur für Admins und nicht bei laufendem Agent
+		if p.IsAdmin && !p.Backends[i].Online {
 			p.Backends[i].SetupCmd = s.setupCommand(base, p.Backends[i].Token)
 		}
 	}
@@ -901,8 +923,13 @@ func (s *Server) settingsSystem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) settingsPassword(w http.ResponseWriter, r *http.Request) {
+	sess := currentSession(r)
 	err := s.Store.Update(func(st *store.State) error {
-		if !checkPassword(st.Admin, r.FormValue("current")) {
+		u := st.User(sess.User)
+		if sess.OIDC || u == nil {
+			return fmt.Errorf("openid benutzer haben kein lokales passwort")
+		}
+		if !checkPassword(*u, r.FormValue("current")) {
 			return fmt.Errorf("aktuelles passwort falsch")
 		}
 		pw := r.FormValue("new")
@@ -912,10 +939,10 @@ func (s *Server) settingsPassword(w http.ResponseWriter, r *http.Request) {
 		if pw != r.FormValue("repeat") {
 			return fmt.Errorf("passwörter stimmen nicht überein")
 		}
-		return SetPassword(&st.Admin, pw)
+		return SetPassword(u, pw)
 	})
 	if err == nil {
-		s.setSessionCookie(w, r, newSession(s.Store.Get()), int(sessionTTL.Seconds()))
+		s.setSessionCookie(w, r, newSession(s.Store.Get(), sess), int(sessionTTL.Seconds()))
 	}
 	s.done(w, r, "/settings", err, "Passwort geändert")
 }
