@@ -53,6 +53,7 @@ type Server struct {
 	pins   pinCache
 
 	auditLog auditLog
+	mon      monitor
 }
 
 type agentSeen struct {
@@ -66,6 +67,7 @@ type agentSeen struct {
 // Start startet die Hintergrundaufgaben (nach Handler aufrufen).
 func (s *Server) Start(stop <-chan struct{}) {
 	go s.seenLoop(stop)
+	go s.monitorLoop(stop)
 }
 
 // Handler liefert den HTTP Handler.
@@ -118,6 +120,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/oidc", a(s.settingsOIDC))
 	mux.HandleFunc("POST /settings/password", a(s.settingsPassword))
 	mux.HandleFunc("POST /settings/metrics", a(s.settingsMetrics))
+	mux.HandleFunc("POST /settings/notify", a(s.settingsNotify))
+	mux.HandleFunc("POST /settings/notify/test", a(s.notifyTest))
 	mux.HandleFunc("POST /settings/users", a(s.userAdd))
 	mux.HandleFunc("POST /settings/users/{name}/delete", a(s.userDelete))
 	mux.HandleFunc("POST /settings/users/{name}/role", a(s.userRole))
@@ -228,10 +232,13 @@ type page struct {
 	PWLogin  bool
 	Callback string
 	BaseURL  string
-	RPKI     map[string]RPKIResult
-	Backends []backendView
-	Updates  *updatesView
-	Audit    []AuditEntry
+
+	NotifyDiscord bool
+	NotifyWebhook bool
+	RPKI          map[string]RPKIResult
+	Backends      []backendView
+	Updates       *updatesView
+	Audit         []AuditEntry
 }
 
 func (s *Server) newPage(r *http.Request, title, active string) *page {
@@ -712,8 +719,13 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	p := s.newPage(r, "Einstellungen", "settings")
 	p.Callback = s.redirectURI(p.S, r)
 	p.BaseURL = s.baseURL(p.S, r)
+	// Geheimnisse landen nie im HTML: Webhook URLs enthalten ein Token
+	p.NotifyDiscord = p.S.Settings.Notify.DiscordWebhook != ""
+	p.NotifyWebhook = p.S.Settings.Notify.WebhookURL != ""
+	p.S.Settings.Notify.DiscordWebhook, p.S.Settings.Notify.WebhookURL = "", ""
+	p.S.Settings.Notify.SMTPPassword = ""
 	if !p.IsAdmin {
-		p.S.Settings.MetricsToken = "" // Geheimnis nur für Admins
+		p.S.Settings.MetricsToken = ""
 	}
 	s.render(w, "settings", p)
 }

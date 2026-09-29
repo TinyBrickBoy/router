@@ -110,7 +110,7 @@ func secretField(k string) bool {
 	case "csrf", "current", "new", "repeat":
 		return true
 	}
-	for _, s := range []string{"pass", "secret", "token", "key"} {
+	for _, s := range []string{"pass", "secret", "token", "key", "webhook"} {
 		if strings.Contains(k, s) {
 			return true
 		}

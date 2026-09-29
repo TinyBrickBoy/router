@@ -76,6 +76,30 @@
 </section>
 
 <section class="card">
+  <h2>Benachrichtigungen</h2>
+  <p class="muted">Meldet, wenn eine BGP Session länger als eine Minute weg ist, ein Backend offline geht oder ein angekündigtes Präfix RPKI invalid wird (Prüfung alle 6 Stunden), und wenn sich das wieder erholt. Webhook URLs und Passwort werden nach dem Speichern nicht mehr angezeigt, leer lassen = unverändert.</p>
+  <form method="post" action="/settings/notify" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Discord Webhook URL {{if .NotifyDiscord}}(gesetzt){{end}}<input name="discord_webhook" type="password" autocomplete="off" placeholder="https://discord.com/api/webhooks/…"></label>
+    {{if .NotifyDiscord}}<label class="check"><input type="checkbox" name="clear_discord_webhook"> Discord Webhook entfernen</label>{{end}}
+    <label>Webhook URL (JSON POST) {{if .NotifyWebhook}}(gesetzt){{end}}<input name="webhook_url" type="password" autocomplete="off" placeholder="https://example.com/hook"></label>
+    {{if .NotifyWebhook}}<label class="check"><input type="checkbox" name="clear_webhook_url"> Webhook entfernen</label>{{end}}
+    <label>SMTP Server<input name="smtp_host" value="{{.S.Settings.Notify.SMTPHost}}" placeholder="smtp.example.com"></label>
+    <label>SMTP Port (587 STARTTLS, 465 TLS)<input name="smtp_port" type="number" value="{{if .S.Settings.Notify.SMTPPort}}{{.S.Settings.Notify.SMTPPort}}{{end}}" placeholder="587"></label>
+    <label>SMTP Benutzer<input name="smtp_user" value="{{.S.Settings.Notify.SMTPUser}}" autocomplete="off"></label>
+    <label>SMTP Passwort (leer = unverändert)<input name="smtp_password" type="password" autocomplete="off"></label>
+    <label>Absender<input name="mail_from" value="{{.S.Settings.Notify.MailFrom}}" placeholder="router@example.com"></label>
+    <label>Empfänger (kommagetrennt)<input name="mail_to" value="{{.S.Settings.Notify.MailTo}}" placeholder="noc@example.com"></label>
+    <label class="check"><input type="checkbox" name="clear_smtp_password"> SMTP Passwort löschen</label>
+    <label class="check"><input type="checkbox" name="bgp" {{if .S.Settings.Notify.BGP}}checked{{end}}> BGP Sessions</label>
+    <label class="check"><input type="checkbox" name="backends" {{if .S.Settings.Notify.Backends}}checked{{end}}> Backends</label>
+    <label class="check"><input type="checkbox" name="rpki" {{if .S.Settings.Notify.RPKI}}checked{{end}}> RPKI</label>
+    <div class="wide"><button class="primary">Speichern</button></div>
+  </form>
+  <form method="post" action="/settings/notify/test"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Testnachricht senden</button></form>
+</section>
+
+<section class="card">
   <h2>Prometheus Metrics {{if .S.Settings.MetricsToken}}<span class="badge ok">aktiv</span>{{else}}<span class="badge">aus</span>{{end}}</h2>
   <p class="muted">Kennzahlen zu BGP Sessions, Präfixen, RPKI, Backends und WireGuard Tunneln unter <code>{{.BaseURL}}/metrics</code>. Prometheus schickt das Token als Bearer Token mit.</p>
   {{if .S.Settings.MetricsToken}}

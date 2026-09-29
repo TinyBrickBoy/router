@@ -78,9 +78,9 @@ func checkRPKI(ctx context.Context, asn uint32, cidr string) RPKIResult {
 	return res
 }
 
-func (s *Server) rpkiCheckAll(w http.ResponseWriter, r *http.Request) {
-	st := s.Store.Get()
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+// refreshRPKI prüft alle Präfixe und legt die Ergebnisse im Cache ab.
+func (s *Server) refreshRPKI(ctx context.Context, st store.State) []RPKIResult {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	var wg sync.WaitGroup
 	results := make([]RPKIResult, len(st.Prefixes))
@@ -93,14 +93,21 @@ func (s *Server) rpkiCheckAll(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 	s.rpki.mu.Lock()
-	invalid := 0
 	for i, p := range st.Prefixes {
 		s.rpki.m[rpkiKey(st.Settings.ASN, p.CIDR)] = results[i]
-		if strings.HasPrefix(results[i].Status, "invalid") {
+	}
+	s.rpki.mu.Unlock()
+	return results
+}
+
+func (s *Server) rpkiCheckAll(w http.ResponseWriter, r *http.Request) {
+	st := s.Store.Get()
+	invalid := 0
+	for _, res := range s.refreshRPKI(r.Context(), st) {
+		if strings.HasPrefix(res.Status, "invalid") {
 			invalid++
 		}
 	}
-	s.rpki.mu.Unlock()
 	msg := fmt.Sprintf("RPKI für %d Präfixe geprüft", len(st.Prefixes))
 	if invalid > 0 {
 		http.Redirect(w, r, "/prefixes?err="+url.QueryEscape(fmt.Sprintf("%s: %d davon RPKI invalid, bitte ROAs prüfen", msg, invalid)), http.StatusSeeOther)

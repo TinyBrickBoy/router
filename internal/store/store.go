@@ -41,6 +41,7 @@ type Settings struct {
 	Update    UpdateSettings `json:"update"`
 	RPKI      RPKISettings   `json:"rpki"`
 	OIDC      OIDCSettings   `json:"oidc"`
+	Notify    NotifySettings `json:"notify"`
 	// MetricsToken schützt /metrics (leer = Endpoint aus).
 	MetricsToken string `json:"metrics_token"`
 }
@@ -56,6 +57,21 @@ type OIDCSettings struct {
 	ViewerUsers     string `json:"viewer_users"`   // wie AllowedUsers, aber nur lesend
 	ViewerGroups    string `json:"viewer_groups"`  // wie AllowedGroups, aber nur lesend
 	DisablePassword bool   `json:"disable_password"`
+}
+
+// NotifySettings: Kanäle und Ereignisse für Benachrichtigungen.
+type NotifySettings struct {
+	DiscordWebhook string `json:"discord_webhook"`
+	WebhookURL     string `json:"webhook_url"`
+	SMTPHost       string `json:"smtp_host"`
+	SMTPPort       int    `json:"smtp_port"`
+	SMTPUser       string `json:"smtp_user"`
+	SMTPPassword   string `json:"smtp_password"`
+	MailFrom       string `json:"mail_from"`
+	MailTo         string `json:"mail_to"` // kommagetrennt
+	BGP            bool   `json:"bgp"`
+	Backends       bool   `json:"backends"`
+	RPKI           bool   `json:"rpki"`
 }
 
 // RPKISettings: optionaler RTR Validator. Ist er gesetzt, kündigt BIRD keine
@@ -169,6 +185,7 @@ func Defaults() State {
 				BirdcBinary:    "birdc",
 			},
 			Update: UpdateSettings{GitHubRepo: "tinybrickboy/router"},
+			Notify: NotifySettings{BGP: true, Backends: true, RPKI: true},
 		},
 		SecretKey: RandomHex(32),
 	}
