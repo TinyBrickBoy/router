@@ -125,6 +125,8 @@ type Admin struct {
 	PasswordHash string `json:"password_hash"`
 	Salt         string `json:"salt"`
 	Iterations   int    `json:"iterations"`
+	// SessionEpoch wird beim Abmelden erhöht und macht alle Sessions ungültig.
+	SessionEpoch int `json:"session_epoch"`
 }
 
 // Defaults liefert einen neuen Zustand mit sinnvollen Standardwerten.

@@ -119,7 +119,7 @@ func (s *Server) oidcLogin(w http.ResponseWriter, r *http.Request) {
 	payload := strings.Join([]string{state, nonce, verifier, exp}, ".")
 	http.SetCookie(w, &http.Cookie{
 		Name: oidcCookie, Value: payload + "." + mac(st.SecretKey, "oidc", payload),
-		Path: "/auth/", MaxAge: 600, HttpOnly: true, Secure: r.TLS != nil,
+		Path: "/auth/", MaxAge: 600, HttpOnly: true, Secure: s.secureCookies(r),
 		SameSite: http.SameSiteLaxMode, // muss beim Rücksprung vom Provider mitgesendet werden
 	})
 	challenge := sha256.Sum256([]byte(verifier))
@@ -165,12 +165,17 @@ func (c idClaims) audiences() []string {
 
 func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	fail := func(msg string, err error) {
+		s.logins.Fail(clientIP(r))
 		if err != nil {
 			log.Printf("oidc login fehlgeschlagen: %s: %v", msg, err)
 		} else {
 			log.Printf("oidc login fehlgeschlagen: %s", msg)
 		}
 		http.Redirect(w, r, "/login?err="+url.QueryEscape(msg), http.StatusSeeOther)
+	}
+	if s.logins.Blocked(clientIP(r)) {
+		http.Error(w, "zu viele fehlgeschlagene anmeldungen, bitte später erneut versuchen", http.StatusTooManyRequests)
+		return
 	}
 	st := s.Store.Get()
 	o := st.Settings.OIDC
@@ -183,7 +188,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, err := r.Cookie(oidcCookie)
-	http.SetCookie(w, &http.Cookie{Name: oidcCookie, Path: "/auth/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: oidcCookie, Path: "/auth/", MaxAge: -1, HttpOnly: true, Secure: s.secureCookies(r), SameSite: http.SameSiteLaxMode})
 	if err != nil {
 		fail("Login Sitzung abgelaufen, bitte erneut versuchen", nil)
 		return
@@ -221,7 +226,8 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		fail(fmt.Sprintf("Benutzer %q ist nicht freigeschaltet", user), nil)
 		return
 	}
-	log.Printf("oidc login: %s (sub %s) von %s", user, claims.Sub, r.RemoteAddr)
+	s.logins.Reset(clientIP(r))
+	log.Printf("oidc login: %s (sub %s) von %s", user, claims.Sub, clientIP(r))
 	s.setSessionCookie(w, r, newSession(st), int(sessionTTL.Seconds()))
 	// Per HTML weiterleiten statt 303: sonst gilt die Weiterleitung als Teil der
 	// Cross-Site Navigation vom Provider und der SameSite=Strict Cookie fehlt.

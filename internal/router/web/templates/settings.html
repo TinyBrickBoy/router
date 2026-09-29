@@ -56,7 +56,7 @@
 <section class="card">
   <h2>OpenID Connect Login {{if .S.Settings.OIDC.Enabled}}<span class="badge ok">aktiv</span>{{else}}<span class="badge">aus</span>{{end}}</h2>
   <p class="muted">Anmeldung über einen OpenID Provider (Keycloak, Authentik, Authelia, Zitadel, Google, Microsoft …). Beim Provider einen vertraulichen Client mit dieser Redirect URI anlegen:</p>
-  <div class="copy"><input readonly value="{{.Callback}}" onclick="this.select()"><button type="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value);this.textContent='Kopiert'">Kopieren</button></div>
+  <div class="copy"><input readonly value="{{.Callback}}" data-select><button type="button" data-copy>Kopieren</button></div>
   {{if not .S.Settings.PublicURL}}<p class="muted">Tipp: oben unter Allgemein die öffentliche URL setzen, damit die Redirect URI fest ist.</p>{{end}}
   <form method="post" action="/settings/oidc" class="grid-form">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -103,7 +103,7 @@
         <td>{{.Name}}</td><td class="mono">{{.Address}}</td><td>AS{{.RemoteASN}}</td>
         <td>{{if .Multihop}}{{.Multihop}}{{else}}–{{end}}</td><td class="mono">{{or .SourceAddress "–"}}</td>
         <td>{{if .Password}}gesetzt{{else}}–{{end}}</td>
-        <td class="actions"><form method="post" action="/settings/neighbors/{{$.Key}}/{{.ID}}/delete" onsubmit="return confirm('Neighbor löschen?')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form></td>
+        <td class="actions"><form method="post" action="/settings/neighbors/{{$.Key}}/{{.ID}}/delete" data-confirm="Neighbor löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form></td>
       </tr>
     {{else}}
       <tr><td colspan="7" class="muted">Keine Neighbors.</td></tr>

@@ -40,6 +40,20 @@ func (s *Server) agentSync(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ungültiger public key", http.StatusBadRequest)
 		return
 	}
+	var err error
+	if req.Hostname, err = cleanText("hostname", req.Hostname, 253); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, f := range []*string{&req.Version, &req.Arch, &req.SHA256} {
+		if *f, err = cleanText("feld", *f, 128); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if req.Arch != "" && !archName.MatchString(req.Arch) {
+		req.Arch = ""
+	}
 	s.seenMu.Lock()
 	s.seen[b.ID] = agentSeen{At: time.Now(), Addr: remoteHost(r), Version: req.Version, SHA: req.SHA256, Arch: req.Arch}
 	s.seenMu.Unlock()
@@ -104,10 +118,11 @@ func (s *Server) endpoint(st store.State, r *http.Request) string {
 			host = h
 		}
 	}
-	if h, p, err := net.SplitHostPort(host); err == nil {
-		return net.JoinHostPort(h, p)
+	host = strings.Trim(host, "[]")
+	if !validHost(host) {
+		return ""
 	}
-	return net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(st.Settings.WireGuard.ListenPort))
+	return net.JoinHostPort(host, strconv.Itoa(st.Settings.WireGuard.ListenPort))
 }
 
 // shq quotet einen Wert für eine Shell (in einfachen Anführungszeichen).
@@ -125,7 +140,7 @@ func (s *Server) setupScript(w http.ResponseWriter, r *http.Request) {
 	err := setupTmpl.Execute(&buf, map[string]string{
 		"Server": s.baseURL(s.Store.Get(), r),
 		"Token":  b.Token,
-		"Name":   b.Name,
+		"Pin":    s.Pin,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), 500)
@@ -135,6 +150,8 @@ func (s *Server) setupScript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(buf.Bytes())
 }
+
+var archName = regexp.MustCompile(`^(amd64|arm64|arm)$`)
 
 var distName = regexp.MustCompile(`^bgp-(agent|router)-linux-(amd64|arm64|arm)$`)
 

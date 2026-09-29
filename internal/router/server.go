@@ -32,6 +32,8 @@ type Server struct {
 	Runner   *sysexec.Runner
 	DistDir  string
 	StateDir string
+	// Pin ist der Public Key Hash des selbst signierten Zertifikats (leer bei CA Zertifikat oder HTTP).
+	Pin string
 	// Restart ersetzt den Prozess durch das neu installierte Binary (ohne Downtime).
 	Restart func() error
 
@@ -45,8 +47,9 @@ type Server struct {
 
 	updateMu sync.Mutex
 
-	rpki rpkiCache
-	oidc oidcClient
+	rpki   rpkiCache
+	oidc   oidcClient
+	logins loginLimiter
 }
 
 type agentSeen struct {
@@ -121,11 +124,15 @@ func (s *Server) Handler() http.Handler {
 	return securityHeaders(mux)
 }
 
+const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+
 func securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", csp)
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.ServeHTTP(w, r)
 	})
 }
@@ -248,18 +255,27 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	st := s.Store.Get()
 	if st.Settings.OIDC.Enabled && st.Settings.OIDC.DisablePassword {
 		http.Error(w, "passwort login ist deaktiviert", http.StatusForbidden)
 		return
 	}
+	ip := clientIP(r)
+	if s.logins.Blocked(ip) {
+		log.Printf("login von %s gesperrt (zu viele fehlversuche)", ip)
+		http.Redirect(w, r, "/login?err="+url.QueryEscape("Zu viele fehlgeschlagene Anmeldungen, bitte in 15 Minuten erneut versuchen"), http.StatusSeeOther)
+		return
+	}
 	user := r.FormValue("username")
 	if constEq(user, st.Admin.Username) && checkPassword(st.Admin, r.FormValue("password")) {
+		s.logins.Reset(ip)
 		s.setSessionCookie(w, r, newSession(st), int(sessionTTL.Seconds()))
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	log.Printf("fehlgeschlagener login von %s", r.RemoteAddr)
+	s.logins.Fail(ip)
+	log.Printf("fehlgeschlagener login von %s", ip)
 	time.Sleep(time.Second)
 	http.Redirect(w, r, "/login?err="+url.QueryEscape("Benutzername oder Passwort falsch"), http.StatusSeeOther)
 }
@@ -267,6 +283,10 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 func constEq(a, b string) bool { return len(a) == len(b) && mac("x", a) == mac("x", b) }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	// Alle Sessions serverseitig ungültig machen (auch gestohlene Cookies)
+	if err := s.Store.Update(func(st *store.State) error { st.Admin.SessionEpoch++; return nil }); err != nil {
+		log.Printf("logout: %v", err)
+	}
 	s.setSessionCookie(w, r, "", -1)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
@@ -346,13 +366,24 @@ func (s *Server) prefixAdd(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		// Schutz vor Tippfehlern wie 0.0.0.0/0: das würde eine Default Route ankündigen
+		if (p.Addr().Is4() && p.Bits() < 8) || (p.Addr().Is6() && p.Bits() < 16) {
+			return fmt.Errorf("%s ist zu groß (mindestens /8 bzw. /16)", p)
+		}
+		if !p.Addr().IsGlobalUnicast() || p.Addr().IsPrivate() {
+			return fmt.Errorf("%s ist kein öffentliches unicast netz", p)
+		}
+		desc, err := cleanText("beschreibung", r.FormValue("description"), 200)
+		if err != nil {
+			return err
+		}
 		for _, o := range st.Prefixes {
 			if op, err := netip.ParsePrefix(o.CIDR); err == nil && op.Overlaps(p) {
 				return fmt.Errorf("%s überschneidet sich mit %s", p, op)
 			}
 		}
 		st.Prefixes = append(st.Prefixes, store.Prefix{
-			ID: store.NewID(), CIDR: p.String(), Description: strings.TrimSpace(r.FormValue("description")),
+			ID: store.NewID(), CIDR: p.String(), Description: desc,
 			Announce: r.FormValue("announce") != "",
 		})
 		sort.Slice(st.Prefixes, func(i, j int) bool { return st.Prefixes[i].CIDR < st.Prefixes[j].CIDR })
@@ -441,8 +472,12 @@ func (s *Server) assignmentAdd(w http.ResponseWriter, r *http.Request) {
 		if err := validTarget(st, t); err != nil {
 			return err
 		}
+		desc, err := cleanText("beschreibung", r.FormValue("description"), 200)
+		if err != nil {
+			return err
+		}
 		st.Assignments = append(st.Assignments, store.Assignment{
-			ID: store.NewID(), CIDR: a.String(), Target: t, Description: strings.TrimSpace(r.FormValue("description")),
+			ID: store.NewID(), CIDR: a.String(), Target: t, Description: desc,
 		})
 		sort.Slice(st.Assignments, func(i, j int) bool { return st.Assignments[i].CIDR < st.Assignments[j].CIDR })
 		return nil
@@ -513,6 +548,16 @@ func (s *Server) baseURL(st store.State, r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
+// setupCommand pinnt beim selbst signierten Zertifikat den Public Key des Routers,
+// damit schon das Setup Skript nicht per MITM ausgetauscht werden kann.
+func (s *Server) setupCommand(base, token string) string {
+	u := base + "/setup/" + token
+	if s.Pin != "" && strings.HasPrefix(base, "https://") {
+		return fmt.Sprintf("curl -fsSLk --pinnedpubkey %s %s | sudo bash", shq("sha256//"+s.Pin), shq(u))
+	}
+	return fmt.Sprintf("curl -fsSL %s | sudo bash", shq(u))
+}
+
 func (s *Server) backendViews(st store.State) []backendView {
 	s.seenMu.RLock()
 	defer s.seenMu.RUnlock()
@@ -541,14 +586,17 @@ func (s *Server) backendsPage(w http.ResponseWriter, r *http.Request) {
 	p.Backends = s.backendViews(p.S)
 	base := s.baseURL(p.S, r)
 	for i := range p.Backends {
-		p.Backends[i].SetupCmd = fmt.Sprintf("curl -fsSL '%s/setup/%s' | sudo bash", base, p.Backends[i].Token)
+		p.Backends[i].SetupCmd = s.setupCommand(base, p.Backends[i].Token)
 	}
 	s.render(w, "backends", p)
 }
 
 func (s *Server) backendAdd(w http.ResponseWriter, r *http.Request) {
 	err := s.Store.Update(func(st *store.State) error {
-		name := strings.TrimSpace(r.FormValue("name"))
+		name, err := cleanText("name", r.FormValue("name"), 64)
+		if err != nil {
+			return err
+		}
 		if name == "" {
 			return fmt.Errorf("name fehlt")
 		}
@@ -595,6 +643,41 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	p := s.newPage(r, "Einstellungen", "settings")
 	p.Callback = s.redirectURI(p.S, r)
 	s.render(w, "settings", p)
+}
+
+// cleanText lehnt Steuerzeichen ab (z.B. Zeilenumbrüche in BIRD/WireGuard Configs) und begrenzt die Länge.
+func cleanText(field, v string, max int) (string, error) {
+	v = strings.TrimSpace(v)
+	if len(v) > max {
+		return "", fmt.Errorf("%s ist zu lang (max. %d zeichen)", field, max)
+	}
+	for _, c := range v {
+		if c < 0x20 || c == 0x7f {
+			return "", fmt.Errorf("%s enthält ungültige zeichen", field)
+		}
+	}
+	return v, nil
+}
+
+// validHost prüft einen Hostnamen oder eine IP (ohne Port).
+func validHost(v string) bool {
+	if _, err := netip.ParseAddr(strings.Trim(v, "[]")); err == nil {
+		return true
+	}
+	if v == "" || len(v) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(v, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func atoi(v string) (int, error) {
@@ -671,9 +754,17 @@ func (s *Server) neighborAdd(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		name, err := cleanText("name", r.FormValue("name"), 64)
+		if err != nil {
+			return err
+		}
+		pw, err := cleanText("bgp passwort", r.FormValue("password"), 80)
+		if err != nil {
+			return err
+		}
 		n := store.Neighbor{
-			ID: store.NewID(), Name: strings.TrimSpace(r.FormValue("name")), Address: addr.String(),
-			RemoteASN: asn, Password: r.FormValue("password"),
+			ID: store.NewID(), Name: name, Address: addr.String(),
+			RemoteASN: asn, Password: pw,
 		}
 		if n.Name == "" {
 			n.Name = "upstream"
@@ -757,8 +848,12 @@ func (s *Server) settingsWireGuard(w http.ResponseWriter, r *http.Request) {
 			}
 			t6 = p.Masked().String()
 		}
+		ep := strings.TrimSpace(r.FormValue("endpoint"))
+		if ep != "" && !validHost(ep) {
+			return fmt.Errorf("endpoint muss eine ip oder ein hostname sein (ohne port)")
+		}
 		wg.Interface, wg.ListenPort, wg.MTU, wg.TunnelV4, wg.TunnelV6 = iface, port, mtu, t4, t6
-		wg.Endpoint = strings.TrimSpace(r.FormValue("endpoint"))
+		wg.Endpoint = strings.Trim(ep, "[]")
 		return st.AllocateTunnelIPs()
 	})
 	if err == nil && oldIface != "" && oldIface != s.Store.Get().Settings.WireGuard.Interface {
@@ -787,7 +882,11 @@ func (s *Server) settingsSystem(w http.ResponseWriter, r *http.Request) {
 			dst *string
 			key string
 		}{{&sys.BirdConfig, "bird_config"}, {&sys.BirdBinary, "bird_binary"}, {&sys.BirdcBinary, "birdc_binary"}} {
-			if v := strings.TrimSpace(r.FormValue(f.key)); v != "" {
+			v, err := cleanText(f.key, r.FormValue(f.key), 256)
+			if err != nil {
+				return err
+			}
+			if v != "" {
 				*f.dst = v
 			}
 		}
