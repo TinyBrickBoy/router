@@ -10,13 +10,13 @@ BGP läuft nur auf dem Router (VPS). Die Backends brauchen kein BGP, nur ausgehe
 ```
                 Internet / Upstream (BGP)
                           │
-                ┌─────────┴──────────┐
+                ┌─────────┴───────────┐
                 │  VPS: bgp-router    │  BIRD2 (v4/v6 Sessions, RPKI)
                 │  WebUI :8080        │  Dummy bgp0 → lokale IPs
                 │  wg-bgp (Hub)       │  unreachable für nicht zugewiesene IPs
-                └──┬──────────────┬──┘
+                └──┬──────────────┬───┘
           WireGuard│              │WireGuard
-          ┌────────┴───┐    ┌─────┴──────┐
+          ┌────────┴────┐    ┌────┴────────┐
           │ bgp-agent   │    │ bgp-agent   │  IPs lokal registriert,
           │ Backend A   │    │ Backend B   │  Antworten per Policy Routing
           └─────────────┘    └─────────────┘  zurück durch den Tunnel
