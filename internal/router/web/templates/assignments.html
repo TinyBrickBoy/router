@@ -1,0 +1,48 @@
+{{define "content"}}
+<h1>Zuweisungen</h1>
+<p class="muted">Legt fest, wohin einzelne IPs oder Subnetze aus den Präfixen geroutet werden: lokal auf dem VPS oder per WireGuard zu einem Backend. Einzelne IPs (/32, /128) werden als Adresse eingetragen, größere Netze komplett per AnyIP registriert. Nicht zugewiesene Adressen werden verworfen.</p>
+
+<section class="card">
+  <h2>Zuweisung hinzufügen</h2>
+  {{if not .S.Prefixes}}<p class="muted">Zuerst unter <a href="/prefixes">Präfixe</a> ein Netz eintragen.</p>{{else}}
+  <form method="post" action="/assignments" class="inline">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input name="cidr" placeholder="203.0.113.10 oder 203.0.113.64/28" required>
+    <select name="target">
+      <option value="local">Lokal (VPS)</option>
+      {{range .S.Backends}}<option value="{{.ID}}">WireGuard → {{.Name}}</option>{{end}}
+    </select>
+    <input name="description" placeholder="Beschreibung">
+    <button class="primary">Hinzufügen</button>
+  </form>
+  {{end}}
+</section>
+
+<section class="card">
+  <table>
+    <thead><tr><th>Netz</th><th>Ziel</th><th>Beschreibung</th><th></th></tr></thead>
+    <tbody>
+    {{range $a := .S.Assignments}}
+      <tr>
+        <td class="mono">{{.CIDR}}</td>
+        <td>
+          <form method="post" action="/assignments/{{.ID}}/target" class="inline tight">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <select name="target" onchange="this.form.submit()">
+              {{range $id, $name := $.Targets}}<option value="{{$id}}" {{if eq $id $a.Target}}selected{{end}}>{{$name}}</option>{{end}}
+            </select>
+            <noscript><button>Ändern</button></noscript>
+          </form>
+        </td>
+        <td>{{.Description}}</td>
+        <td class="actions">
+          <form method="post" action="/assignments/{{.ID}}/delete" onsubmit="return confirm('Zuweisung {{.CIDR}} löschen?')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="4" class="muted">Noch keine Zuweisungen.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

@@ -1,0 +1,36 @@
+{{define "layout"}}<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · BGP Router</title>
+<link rel="stylesheet" href="/static/style.css">
+{{block "head" .}}{{end}}
+</head>
+<body>
+{{if .CSRF}}
+<header class="top">
+  <a class="brand" href="/">BGP Router</a>
+  <nav>
+    <a href="/" {{if eq .Active "dash"}}class="active"{{end}}>Übersicht</a>
+    <a href="/prefixes" {{if eq .Active "prefixes"}}class="active"{{end}}>Präfixe</a>
+    <a href="/assignments" {{if eq .Active "assignments"}}class="active"{{end}}>Zuweisungen</a>
+    <a href="/backends" {{if eq .Active "backends"}}class="active"{{end}}>Backends</a>
+    <a href="/settings" {{if eq .Active "settings"}}class="active"{{end}}>Einstellungen</a>
+    <a href="/updates" {{if eq .Active "updates"}}class="active"{{end}}>Updates</a>
+  </nav>
+  <form method="post" action="/logout" class="logout">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="link">Abmelden</button>
+  </form>
+</header>
+{{end}}
+<main>
+  {{if .DryRun}}<div class="flash warn">Dry-Run Modus: Systembefehle werden nur protokolliert.</div>{{end}}
+  {{if .Msg}}<div class="flash ok">{{.Msg}}</div>{{end}}
+  {{if .Err}}<div class="flash err">{{.Err}}</div>{{end}}
+  {{template "content" .}}
+</main>
+<footer>bgp-router {{.Version}}</footer>
+</body>
+</html>{{end}}

@@ -1,0 +1,32 @@
+{{define "content"}}
+<h1>Übersicht</h1>
+<div class="stats">
+  <div class="stat"><span>AS{{.S.Settings.ASN}}</span><small>Eigene ASN</small></div>
+  <div class="stat"><span>{{len .S.Prefixes}}</span><small>Präfixe</small></div>
+  <div class="stat"><span>{{len .S.Assignments}}</span><small>Zuweisungen</small></div>
+  <div class="stat"><span>{{.Online}} / {{len .Backends}}</span><small>Backends online</small></div>
+</div>
+
+<section class="card">
+  <div class="row between">
+    <h2>Konfiguration</h2>
+    <form method="post" action="/apply"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="primary">Jetzt anwenden</button></form>
+  </div>
+  <p>Zuletzt angewendet: <b>{{ago .LastApply}}</b>
+  {{if .ApplyErr}}<span class="badge err">Fehler</span>{{else if not .LastApply.IsZero}}<span class="badge ok">OK</span>{{end}}</p>
+  {{if .ApplyErr}}<pre class="error">{{.ApplyErr}}</pre>{{end}}
+  {{if .BirdConf}}<details><summary>Erzeugte BIRD Konfiguration</summary><pre>{{.BirdConf}}</pre></details>{{end}}
+</section>
+
+{{if .S.Settings.System.ManageBird}}
+<section class="card">
+  <h2>BGP Sessions (birdc show protocols)</h2>
+  <pre>{{if .BirdStatus}}{{.BirdStatus}}{{else}}keine Daten{{end}}</pre>
+</section>
+{{end}}
+
+<section class="card">
+  <h2>WireGuard ({{.S.Settings.WireGuard.Interface}})</h2>
+  <pre>{{if .WGStatus}}{{.WGStatus}}{{else}}keine Daten{{end}}</pre>
+</section>
+{{end}}
