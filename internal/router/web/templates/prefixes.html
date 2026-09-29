@@ -30,7 +30,7 @@
         <td>{{with index $.RPKI .CIDR}}<span class="badge {{if eq .Status "valid"}}ok{{else if eq .Status "unknown"}}warn{{else}}err{{end}}" title="{{range .ROAs}}{{.}}&#10;{{end}}{{.Err}}">{{.Status}}</span>{{else}}<span class="muted">–</span>{{end}}</td>
         <td class="actions">
           <form method="post" action="/prefixes/{{.ID}}/toggle"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>{{if .Announce}}Pausieren{{else}}Ankündigen{{end}}</button></form>
-          <form method="post" action="/prefixes/{{.ID}}/delete" onsubmit="return confirm('Präfix {{.CIDR}} löschen?')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
+          <form method="post" action="/prefixes/{{.ID}}/delete" data-confirm="Präfix {{.CIDR}} löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
         </td>
       </tr>
     {{else}}

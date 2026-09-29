@@ -7,6 +7,7 @@ set -euo pipefail
 
 SERVER={{shq .Server}}
 TOKEN={{shq .Token}}
+PIN={{shq .Pin}}
 BIN=/usr/local/bin/bgp-agent
 CONF_DIR=/etc/bgp-agent
 
@@ -14,6 +15,15 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "Bitte als root ausführen (sudo)." >&2
   exit 1
 fi
+
+# Beim selbst signierten Router Zertifikat wird dessen Public Key gepinnt (Schutz vor MITM)
+CURL=(curl -fsSL)
+if [ -n "$PIN" ]; then
+  CURL=(curl -fsSLk --pinnedpubkey "sha256//$PIN")
+fi
+case "$SERVER" in
+  http://*) echo "WARNUNG: Verbindung zum Router ohne TLS. Bitte im Router HTTPS verwenden." >&2 ;;
+esac
 
 echo "==> Installiere Abhängigkeiten (wireguard-tools, iproute2, curl)"
 if command -v apt-get >/dev/null 2>&1; then
@@ -45,7 +55,7 @@ esac
 
 echo "==> Lade bgp-agent ($ARCH)"
 TMP="$(mktemp)"
-curl -fsSL "$SERVER/download/bgp-agent-linux-$ARCH" -o "$TMP"
+"${CURL[@]}" "$SERVER/download/bgp-agent-linux-$ARCH" -o "$TMP"
 chmod 755 "$TMP"
 "$TMP" version >/dev/null
 mv -f "$TMP" "$BIN"
@@ -56,6 +66,7 @@ cat > "$CONF_DIR/config.json" <<EOF
 {
   "server": "$SERVER",
   "token": "$TOKEN",
+  "pin_sha256": "$PIN",
   "interface": "wg-bgp",
   "dummy_interface": "bgp0",
   "table": 51820,

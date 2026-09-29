@@ -12,7 +12,7 @@ BGP läuft nur auf dem Router (VPS). Die Backends brauchen kein BGP, nur ausgehe
                           │
                 ┌─────────┴───────────┐
                 │  VPS: bgp-router    │  BIRD2 (v4/v6 Sessions, RPKI)
-                │  WebUI :8080        │  Dummy bgp0 → lokale IPs
+                │  WebUI https :8080  │  Dummy bgp0 → lokale IPs
                 │  wg-bgp (Hub)       │  unreachable für nicht zugewiesene IPs
                 └──┬──────────────┬───┘
           WireGuard│              │WireGuard
@@ -33,18 +33,27 @@ Beide sind statische Go Binaries ohne externe Abhängigkeiten. Auf dem System we
 
 ## Installation auf dem VPS
 
-```bash
-# neuestes GitHub Release
-curl -fsSL https://raw.githubusercontent.com/TinyBrickBoy/router/main/scripts/install-router.sh | sudo bash
+Ein einziger Befehl auf dem VPS:
 
-# oder aus dem Quellcode
-make dist
-sudo ./scripts/install-router.sh ./dist
+```bash
+curl -fsSL https://raw.githubusercontent.com/TinyBrickBoy/router/main/scripts/install-router.sh | sudo bash
 ```
 
-Das Skript installiert BIRD2 und WireGuard, richtet den systemd Dienst `bgp-router` ein und zeigt das initiale Passwort für den Benutzer `admin` an (auch in `/var/lib/bgp-router/initial-password`).
+Das Skript nimmt das neueste GitHub Release. Gibt es noch keins, lädt es Go temporär herunter und baut alles aus dem Quellcode. Es installiert BIRD2 und WireGuard, richtet den systemd Dienst `bgp-router` ein und zeigt die Adresse, das initiale Passwort für `admin` (liegt in `/var/lib/bgp-router/initial-password`) und den Zertifikats Fingerprint an.
 
-Firewall: TCP 8080 (Webinterface) und UDP 51820 (WireGuard) freigeben. Das Webinterface solltest du hinter einen TLS Reverse Proxy (z.B. Caddy) stellen oder `-tls-cert`/`-tls-key` verwenden, denn Setup Links und Sessions enthalten Geheimnisse.
+Wer das Repo schon geklont hat und Go installiert hat: `make dist && sudo ./scripts/install-router.sh ./dist`
+
+Firewall: TCP 8080 (Webinterface) und UDP 51820 (WireGuard) freigeben.
+
+### HTTPS
+
+Das Webinterface läuft standardmäßig über **HTTPS mit einem selbst signierten Zertifikat** (`https://<vps-ip>:8080`). Der Browser warnt deshalb einmal. Vergleiche vorher den Fingerprint mit der Ausgabe des Installers. Setup Skript und Agents **pinnen den Public Key** dieses Zertifikats, sodass ihre Verbindung zum Router auch ohne Domain gegen Man-in-the-Middle Angriffe geschützt ist.
+
+Alternativen:
+- eigenes Zertifikat einer CA: `-tls-cert /pfad/fullchain.pem -tls-key /pfad/privkey.pem`
+- hinter einem HTTPS Reverse Proxy (z.B. Caddy): `-http -listen 127.0.0.1:8080` und unter Einstellungen die öffentliche URL auf `https://…` setzen
+
+Agents führen Selbst-Updates nur über HTTPS aus. Über Klartext HTTP könnte ein Angreifer im Netz sonst ein manipuliertes Binary einschleusen, das als root läuft.
 
 ## Einrichtung im Webinterface
 
@@ -111,7 +120,8 @@ Neues Release bauen: Tag pushen (`git tag v1.2.0 && git push --tags`). Die GitHu
 ## Kommandozeile
 
 ```
-bgp-router run   [-listen :8080] [-state /var/lib/bgp-router/state.json] [-dist /var/lib/bgp-router/dist] [-tls-cert f -tls-key f] [-dry-run]
+bgp-router run   [-listen :8080] [-state /var/lib/bgp-router/state.json] [-dist /var/lib/bgp-router/dist]
+                 [-tls-cert f -tls-key f | -http] [-dry-run]
 bgp-router passwd [-state …]
 bgp-router version
 
@@ -122,6 +132,15 @@ bgp-agent version
 ```
 
 Mit `-dry-run` werden alle Systembefehle nur protokolliert, praktisch zum Ausprobieren ohne root.
+
+## Sicherheit
+
+- HTTPS standardmäßig, Public Key Pinning für Setup Skript und Agents, Selbst-Updates nur über TLS mit SHA256 Prüfung
+- Login: PBKDF2 Passwort Hashes, Sperre nach 10 Fehlversuchen pro IP für 15 Minuten, OpenID Connect optional
+- Sessions: signierte Cookies (`HttpOnly`, `Secure`, `SameSite=Strict`). Abmelden macht alle Sessions ungültig, ebenso ein Passwortwechsel.
+- CSRF Tokens für alle Aktionen, strenge Content Security Policy ohne Inline JavaScript, `X-Frame-Options: DENY`
+- Eingaben werden geprüft: keine Steuerzeichen in Configs, keine Default Route bzw. privaten Netze als Präfix. Auch der Agent prüft alle Werte vom Router, bevor er sie als root anwendet.
+- Zustand, Schlüssel und Tokens liegen in `/var/lib/bgp-router` (nur root lesbar), das initiale Passwort erscheint nicht im Log
 
 ## Hinweise
 
@@ -135,5 +154,5 @@ Mit `-dry-run` werden alle Systembefehle nur protokolliert, praktisch zum Auspro
 make test    # go vet + Tests
 make build   # bin/bgp-router, bin/bgp-agent
 make dist    # alle Architekturen + SHA256SUMS
-go run ./cmd/bgp-router run -dry-run -state ./dev/state.json -dist ./dist -listen 127.0.0.1:8080
+go run ./cmd/bgp-router run -dry-run -state ./dev/state.json -dist ./dist -listen 127.0.0.1:8080   # https://127.0.0.1:8080
 ```

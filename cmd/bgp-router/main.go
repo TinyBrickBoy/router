@@ -22,6 +22,7 @@ import (
 	"github.com/tinybrickboy/router/internal/router"
 	"github.com/tinybrickboy/router/internal/store"
 	"github.com/tinybrickboy/router/internal/sysexec"
+	"github.com/tinybrickboy/router/internal/tlsutil"
 	"github.com/tinybrickboy/router/internal/update"
 	"github.com/tinybrickboy/router/internal/version"
 	"github.com/tinybrickboy/router/internal/wgkey"
@@ -53,8 +54,9 @@ func run(args []string) {
 	statePath := fs.String("state", "/var/lib/bgp-router/state.json", "zustandsdatei")
 	dist := fs.String("dist", "/var/lib/bgp-router/dist", "verzeichnis mit agent/router binaries für updates")
 	dryRun := fs.Bool("dry-run", false, "systembefehle nur protokollieren")
-	tlsCert := fs.String("tls-cert", "", "tls zertifikat (optional)")
-	tlsKey := fs.String("tls-key", "", "tls schlüssel (optional)")
+	tlsCert := fs.String("tls-cert", "", "tls zertifikat einer CA (optional, sonst selbst signiert mit key pinning)")
+	tlsKey := fs.String("tls-key", "", "tls schlüssel zu -tls-cert")
+	plainHTTP := fs.Bool("http", false, "ohne TLS lauschen (nur hinter einem HTTPS reverse proxy auf localhost verwenden)")
 	_ = fs.Parse(args)
 
 	log.SetFlags(log.LstdFlags)
@@ -63,6 +65,8 @@ func run(args []string) {
 		log.Fatalf("zustand laden: %v", err)
 	}
 	stateDir := filepath.Dir(*statePath)
+	// Zustand enthält Schlüssel und Tokens: nur root darf lesen
+	_ = os.Chmod(stateDir, 0o700)
 	if err := initState(st, stateDir); err != nil {
 		log.Fatalf("initialisieren: %v", err)
 	}
@@ -77,12 +81,23 @@ func run(args []string) {
 		log.Fatalf("listen: %v", err)
 	}
 	var tlsConf *tls.Config
-	if *tlsCert != "" {
+	switch {
+	case *tlsCert != "":
 		cert, err := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
 		if err != nil {
 			log.Fatalf("tls: %v", err)
 		}
 		tlsConf = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	case *plainHTTP:
+		log.Printf("WARNUNG: webinterface ohne TLS. nur hinter einem HTTPS reverse proxy verwenden und öffentliche url auf https:// setzen")
+	default:
+		cert, err := tlsutil.EnsureSelfSigned(filepath.Join(stateDir, "tls"))
+		if err != nil {
+			log.Fatalf("tls: %v", err)
+		}
+		srv.Pin, _ = tlsutil.SPKIPin(cert)
+		tlsConf = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+		log.Printf("tls mit selbst signiertem zertifikat, public key pin sha256//%s", srv.Pin)
 	}
 	wrap := func(l net.Listener) net.Listener {
 		if tlsConf != nil {
@@ -90,7 +105,17 @@ func run(args []string) {
 		}
 		return l
 	}
-	httpSrv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	newHTTPServer := func() *http.Server {
+		return &http.Server{
+			Handler:           handler,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       10 * time.Minute, // Uploads von Binaries
+			WriteTimeout:      10 * time.Minute, // GitHub Release Download im Request
+			IdleTimeout:       2 * time.Minute,
+			MaxHeaderBytes:    64 << 10,
+		}
+	}
+	httpSrv := newHTTPServer()
 
 	srv.Restart = func() error {
 		// Laufende Konfiguration nicht mitten im Anwenden unterbrechen
@@ -127,7 +152,7 @@ func run(args []string) {
 			log.Fatalf("listener wiederherstellen: %v", lerr)
 		}
 		rawLn = nl.(*net.TCPListener)
-		httpSrv = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+		httpSrv = newHTTPServer()
 		go serve(httpSrv, wrap(nl))
 		return err
 	}
@@ -198,11 +223,11 @@ func initState(st *store.Store, stateDir string) error {
 				return err
 			}
 			pwFile := filepath.Join(stateDir, "initial-password")
-			_ = os.WriteFile(pwFile, []byte(pw+"\n"), 0o600)
-			log.Printf("==============================================")
-			log.Printf(" erster start: benutzer admin, passwort %s", pw)
-			log.Printf(" (auch gespeichert in %s)", pwFile)
-			log.Printf("==============================================")
+			if err := os.WriteFile(pwFile, []byte(pw+"\n"), 0o600); err != nil {
+				return err
+			}
+			// Passwort nicht ins Journal schreiben (für die Gruppe adm lesbar)
+			log.Printf("erster start: benutzer admin, initiales passwort steht in %s", pwFile)
 		}
 		return s.AllocateTunnelIPs()
 	})

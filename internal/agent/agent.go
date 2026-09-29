@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"github.com/tinybrickboy/router/internal/api"
 	"github.com/tinybrickboy/router/internal/netcfg"
 	"github.com/tinybrickboy/router/internal/sysexec"
+	"github.com/tinybrickboy/router/internal/tlsutil"
 	"github.com/tinybrickboy/router/internal/update"
 	"github.com/tinybrickboy/router/internal/version"
 	"github.com/tinybrickboy/router/internal/wgkey"
@@ -38,6 +40,10 @@ type Config struct {
 	IntervalSeconds int    `json:"interval_seconds"`
 	KeyFile         string `json:"key_file"`
 	CacheFile       string `json:"cache_file"`
+	// PinSHA256 ist der Public Key Hash des selbst signierten Router Zertifikats.
+	PinSHA256 string `json:"pin_sha256"`
+	// AllowInsecureUpdates erlaubt Selbst-Updates über HTTP ohne TLS (nicht empfohlen).
+	AllowInsecureUpdates bool `json:"allow_insecure_updates"`
 }
 
 // LoadConfig liest die Konfiguration und setzt Standardwerte.
@@ -88,8 +94,10 @@ type Agent struct {
 }
 
 func New(cfg Config, r *sysexec.Runner) *Agent {
-	return &Agent{Cfg: cfg, Runner: r, client: &http.Client{Timeout: 20 * time.Second}}
+	return &Agent{Cfg: cfg, Runner: r, client: tlsutil.Client(cfg.PinSHA256, 20*time.Second)}
 }
+
+func (a *Agent) insecure() bool { return strings.HasPrefix(a.Cfg.Server, "http://") }
 
 func (a *Agent) loadKey() error {
 	data, err := os.ReadFile(a.Cfg.KeyFile)
@@ -117,6 +125,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		return err
 	}
 	log.Printf("bgp-agent %s gestartet, server %s, public key %s", version.Version, a.Cfg.Server, a.pub)
+	if a.insecure() {
+		log.Printf("WARNUNG: verbindung zum router ohne TLS, konfiguration kann unterwegs manipuliert werden")
+	}
 	first := true
 	for {
 		a.cycle(first)
@@ -189,8 +200,53 @@ func (a *Agent) sync() (api.AgentConfig, error) {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return cfg, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
-	err = json.NewDecoder(resp.Body).Decode(&cfg)
-	return cfg, err
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&cfg); err != nil {
+		return cfg, err
+	}
+	return cfg, validateConfig(&cfg)
+}
+
+// validateConfig prüft die Werte vom Router, bevor sie als root angewendet werden.
+func validateConfig(cfg *api.AgentConfig) error {
+	if cfg.ServerPublicKey != "" && !wgkey.Valid(cfg.ServerPublicKey) {
+		return errors.New("ungültiger server public key")
+	}
+	if cfg.Endpoint != "" {
+		host, port, err := net.SplitHostPort(cfg.Endpoint)
+		if err != nil || host == "" || strings.ContainsAny(cfg.Endpoint, " \t\r\n=#") {
+			return fmt.Errorf("ungültiger endpoint %q", cfg.Endpoint)
+		}
+		if p, err := strconv.Atoi(port); err != nil || p < 1 || p > 65535 {
+			return fmt.Errorf("ungültiger endpoint port %q", port)
+		}
+	}
+	if cfg.MTU != 0 && (cfg.MTU < 1280 || cfg.MTU > 9000) {
+		return fmt.Errorf("ungültige mtu %d", cfg.MTU)
+	}
+	if cfg.Keepalive < 0 || cfg.Keepalive > 3600 {
+		return fmt.Errorf("ungültiger keepalive %d", cfg.Keepalive)
+	}
+	for _, t := range cfg.TunnelAddrs {
+		if _, err := netip.ParsePrefix(t); err != nil {
+			return fmt.Errorf("ungültige tunnel adresse %q", t)
+		}
+	}
+	for _, r := range cfg.Routes {
+		p, err := netip.ParsePrefix(r)
+		// niemals eine Default Route oder riesige Netze über den Tunnel lokal registrieren
+		if err != nil || (p.Addr().Is4() && p.Bits() < 8) || (p.Addr().Is6() && p.Bits() < 16) {
+			return fmt.Errorf("ungültige zuweisung %q", r)
+		}
+	}
+	if u := cfg.Update; u != nil {
+		if !strings.HasPrefix(u.URL, "/download/bgp-agent-linux-") || strings.Contains(u.URL, "..") {
+			return fmt.Errorf("ungültige update url %q", u.URL)
+		}
+		if len(u.SHA256) != 64 {
+			return errors.New("ungültige update prüfsumme")
+		}
+	}
+	return nil
 }
 
 func (a *Agent) apply(cfg api.AgentConfig) error {
@@ -268,17 +324,19 @@ func (a *Agent) selfUpdate(u *api.Update) error {
 	if u.SHA256 == version.SelfSHA256() {
 		return nil
 	}
-	url := u.URL
-	if strings.HasPrefix(url, "/") {
-		url = a.Cfg.Server + url
+	if a.insecure() && !a.Cfg.AllowInsecureUpdates {
+		// Ohne TLS könnte ein Angreifer im Netz Binary und Prüfsumme austauschen und root Code ausführen
+		return errors.New("selbst-update über http abgelehnt: router mit https betreiben (oder allow_insecure_updates setzen)")
 	}
+	// validateConfig stellt sicher, dass die URL ein relativer Pfad auf den eigenen Router ist
+	url := a.Cfg.Server + u.URL
 	exe := update.Executable()
 	tmp := exe + ".download"
 	defer os.Remove(tmp)
 	log.Printf("lade update %s", url)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	client := &http.Client{Timeout: 5 * time.Minute}
+	client := tlsutil.Client(a.Cfg.PinSHA256, 5*time.Minute)
 	if _, err := update.Download(ctx, client, url, tmp, u.SHA256, nil); err != nil {
 		return err
 	}

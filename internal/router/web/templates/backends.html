@@ -17,8 +17,8 @@
     <h2>{{.Name}} {{if .Online}}<span class="badge ok">online</span>{{else if .PublicKey}}<span class="badge err">offline</span>{{else}}<span class="badge warn">nicht eingerichtet</span>{{end}}</h2>
     <div class="actions">
       {{if .Outdated}}<form method="post" action="/backends/{{.ID}}/update"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>{{if .UpdateRequested}}Update angefordert{{else}}Agent aktualisieren{{end}}</button></form>{{end}}
-      <form method="post" action="/backends/{{.ID}}/token" onsubmit="return confirm('Neues Token erzeugen? Der Agent muss danach neu eingerichtet werden.')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Neues Token</button></form>
-      <form method="post" action="/backends/{{.ID}}/delete" onsubmit="return confirm('Backend {{.Name}} löschen?')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
+      <form method="post" action="/backends/{{.ID}}/token" data-confirm="Neues Token erzeugen? Der Agent muss danach neu eingerichtet werden."><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Neues Token</button></form>
+      <form method="post" action="/backends/{{.ID}}/delete" data-confirm="Backend {{.Name}} löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
     </div>
   </div>
   <dl class="grid">
@@ -34,7 +34,7 @@
     {{range .Assignments}}
       <tr>
         <td class="mono">{{.CIDR}}</td><td>{{.Description}}</td>
-        <td class="actions"><form method="post" action="/assignments/{{.ID}}/delete?back=backends" onsubmit="return confirm('Zuweisung {{.CIDR}} entfernen?')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Entfernen</button></form></td>
+        <td class="actions"><form method="post" action="/assignments/{{.ID}}/delete?back=backends" data-confirm="Zuweisung {{.CIDR}} entfernen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Entfernen</button></form></td>
       </tr>
     {{else}}
       <tr><td colspan="3" class="muted">Diesem Tunnel sind noch keine IPs zugewiesen.</td></tr>
@@ -51,7 +51,7 @@
   </form>
   {{else}}<p class="muted">Zum Zuweisen zuerst unter <a href="/prefixes">Präfixe</a> ein Netz eintragen.</p>{{end}}
   <label>Setup Kommando (enthält das geheime Token)</label>
-  <div class="copy"><input readonly value="{{.SetupCmd}}" onclick="this.select()"><button type="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value);this.textContent='Kopiert'">Kopieren</button></div>
+  <div class="copy"><input readonly value="{{.SetupCmd}}" data-select><button type="button" data-copy>Kopieren</button></div>
 </section>
 {{else}}
 <section class="card"><p class="muted">Noch keine Backends angelegt.</p></section>
