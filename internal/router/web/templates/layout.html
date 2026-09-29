@@ -19,6 +19,7 @@
     <a href="/backends" {{if eq .Active "backends"}}class="active"{{end}}>Backends</a>
     <a href="/settings" {{if eq .Active "settings"}}class="active"{{end}}>Einstellungen</a>
     <a href="/updates" {{if eq .Active "updates"}}class="active"{{end}}>Updates</a>
+    <a href="/audit" {{if eq .Active "audit"}}class="active"{{end}}>Protokoll</a>
   </nav>
   <form method="post" action="/logout" class="logout">
     <input type="hidden" name="csrf" value="{{.CSRF}}">

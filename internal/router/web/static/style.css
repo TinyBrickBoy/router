@@ -88,3 +88,5 @@ body.readonly main form[method=post]:not(.self), body.readonly main .copy { disp
 .role { display: none; }
 body.readonly .role { display: inline; }
 .top .logout .muted { margin-right: 8px; font-size: 13px; }
+.nowrap { white-space: nowrap; }
+.small { font-size: 12px; }

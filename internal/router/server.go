@@ -51,6 +51,8 @@ type Server struct {
 	oidc   oidcClient
 	logins loginLimiter
 	pins   pinCache
+
+	auditLog auditLog
 }
 
 type agentSeen struct {
@@ -113,6 +115,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/users/{name}/delete", a(s.userDelete))
 	mux.HandleFunc("POST /settings/users/{name}/role", a(s.userRole))
 	mux.HandleFunc("POST /settings/users/{name}/password", a(s.userPassword))
+
+	mux.HandleFunc("GET /audit", a(s.auditPage))
 
 	mux.HandleFunc("GET /updates", a(s.updatesPage))
 	mux.HandleFunc("POST /updates/settings", a(s.updateSettings))
@@ -213,6 +217,7 @@ type page struct {
 	RPKI     map[string]RPKIResult
 	Backends []backendView
 	Updates  *updatesView
+	Audit    []AuditEntry
 }
 
 func (s *Server) newPage(r *http.Request, title, active string) *page {
@@ -284,12 +289,15 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if checkPassword(*u, r.FormValue("password")) {
 		s.logins.Reset(ip)
+		s.audit(AuditEntry{User: u.Username, IP: ip, Action: "Anmeldung"})
 		s.setSessionCookie(w, r, newSession(st, session{User: u.Username}), int(sessionTTL.Seconds()))
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 	s.logins.Fail(ip)
 	log.Printf("fehlgeschlagener login von %s", ip)
+	name, _ := cleanText("", user, 64)
+	s.audit(AuditEntry{User: name, IP: ip, Action: "Anmeldung fehlgeschlagen", Failed: true})
 	time.Sleep(time.Second)
 	http.Redirect(w, r, "/login?err="+url.QueryEscape("Benutzername oder Passwort falsch"), http.StatusSeeOther)
 }
@@ -310,6 +318,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("logout: %v", err)
 	}
+	s.auditRequest(r, "Abmeldung", "", false)
 	s.setSessionCookie(w, r, "", -1)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
@@ -412,23 +421,29 @@ func (s *Server) prefixAdd(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(st.Prefixes, func(i, j int) bool { return st.Prefixes[i].CIDR < st.Prefixes[j].CIDR })
 		return nil
 	})
-	s.done(w, r, "/prefixes", err, "Präfix hinzugefügt")
+	s.done(w, r, "/prefixes", err, "Präfix "+strings.TrimSpace(r.FormValue("cidr"))+" hinzugefügt")
 }
 
 func (s *Server) prefixToggle(w http.ResponseWriter, r *http.Request) {
+	msg := ""
 	err := s.Store.Update(func(st *store.State) error {
 		for i := range st.Prefixes {
 			if st.Prefixes[i].ID == r.PathValue("id") {
 				st.Prefixes[i].Announce = !st.Prefixes[i].Announce
+				msg = "Präfix " + st.Prefixes[i].CIDR + " pausiert"
+				if st.Prefixes[i].Announce {
+					msg = "Präfix " + st.Prefixes[i].CIDR + " wird angekündigt"
+				}
 				return nil
 			}
 		}
 		return fmt.Errorf("präfix nicht gefunden")
 	})
-	s.done(w, r, "/prefixes", err, "Gespeichert")
+	s.done(w, r, "/prefixes", err, msg)
 }
 
 func (s *Server) prefixDelete(w http.ResponseWriter, r *http.Request) {
+	cidr := ""
 	err := s.Store.Update(func(st *store.State) error {
 		for i, p := range st.Prefixes {
 			if p.ID != r.PathValue("id") {
@@ -440,12 +455,13 @@ func (s *Server) prefixDelete(w http.ResponseWriter, r *http.Request) {
 					return fmt.Errorf("zuerst die zuweisung %s löschen", a.CIDR)
 				}
 			}
+			cidr = p.CIDR
 			st.Prefixes = append(st.Prefixes[:i], st.Prefixes[i+1:]...)
 			return nil
 		}
 		return fmt.Errorf("präfix nicht gefunden")
 	})
-	s.done(w, r, "/prefixes", err, "Präfix gelöscht")
+	s.done(w, r, "/prefixes", err, "Präfix "+cidr+" gelöscht")
 }
 
 // ---------- Zuweisungen ----------
@@ -505,10 +521,11 @@ func (s *Server) assignmentAdd(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(st.Assignments, func(i, j int) bool { return st.Assignments[i].CIDR < st.Assignments[j].CIDR })
 		return nil
 	})
-	s.done(w, r, backTo(r, "/assignments"), err, "Zuweisung hinzugefügt")
+	s.done(w, r, backTo(r, "/assignments"), err, "Zuweisung "+strings.TrimSpace(r.FormValue("cidr"))+" hinzugefügt")
 }
 
 func (s *Server) assignmentTarget(w http.ResponseWriter, r *http.Request) {
+	msg := ""
 	err := s.Store.Update(func(st *store.State) error {
 		t := r.FormValue("target")
 		if err := validTarget(st, t); err != nil {
@@ -517,25 +534,28 @@ func (s *Server) assignmentTarget(w http.ResponseWriter, r *http.Request) {
 		for i := range st.Assignments {
 			if st.Assignments[i].ID == r.PathValue("id") {
 				st.Assignments[i].Target = t
+				msg = "Ziel von " + st.Assignments[i].CIDR + " geändert: " + targetNames(*st)[t]
 				return nil
 			}
 		}
 		return fmt.Errorf("zuweisung nicht gefunden")
 	})
-	s.done(w, r, "/assignments", err, "Ziel geändert")
+	s.done(w, r, "/assignments", err, msg)
 }
 
 func (s *Server) assignmentDelete(w http.ResponseWriter, r *http.Request) {
+	cidr := ""
 	err := s.Store.Update(func(st *store.State) error {
 		for i := range st.Assignments {
 			if st.Assignments[i].ID == r.PathValue("id") {
+				cidr = st.Assignments[i].CIDR
 				st.Assignments = append(st.Assignments[:i], st.Assignments[i+1:]...)
 				return nil
 			}
 		}
 		return fmt.Errorf("zuweisung nicht gefunden")
 	})
-	s.done(w, r, backTo(r, "/assignments"), err, "Zuweisung gelöscht")
+	s.done(w, r, backTo(r, "/assignments"), err, "Zuweisung "+cidr+" gelöscht")
 }
 
 // backTo erlaubt Formularen auf der Backend Seite, dorthin zurückzukehren.
@@ -630,11 +650,11 @@ func (s *Server) backendAdd(w http.ResponseWriter, r *http.Request) {
 		st.Backends = append(st.Backends, store.Backend{ID: store.NewID(), Name: name, Token: store.RandomHex(24)})
 		return st.AllocateTunnelIPs()
 	})
-	s.done(w, r, "/backends", err, "Backend angelegt, jetzt das Setup Kommando auf dem Backend ausführen")
+	s.done(w, r, "/backends", err, "Backend "+strings.TrimSpace(r.FormValue("name"))+" angelegt, jetzt das Setup Kommando auf dem Backend ausführen")
 }
 
 func (s *Server) backendDelete(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id, name := r.PathValue("id"), ""
 	err := s.Store.Update(func(st *store.State) error {
 		for _, a := range st.Assignments {
 			if a.Target == id {
@@ -643,25 +663,28 @@ func (s *Server) backendDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		for i := range st.Backends {
 			if st.Backends[i].ID == id {
+				name = st.Backends[i].Name
 				st.Backends = append(st.Backends[:i], st.Backends[i+1:]...)
 				return nil
 			}
 		}
 		return fmt.Errorf("backend nicht gefunden")
 	})
-	s.done(w, r, "/backends", err, "Backend gelöscht")
+	s.done(w, r, "/backends", err, "Backend "+name+" gelöscht")
 }
 
 func (s *Server) backendToken(w http.ResponseWriter, r *http.Request) {
+	name := ""
 	err := s.Store.Update(func(st *store.State) error {
 		b := st.Backend(r.PathValue("id"))
 		if b == nil {
 			return fmt.Errorf("backend nicht gefunden")
 		}
+		name = b.Name
 		b.Token = store.RandomHex(24)
 		return nil
 	})
-	s.done(w, r, "/backends", err, "Neues Token erzeugt, das alte ist ungültig")
+	s.done(w, r, "/backends", err, "Neues Token für "+name+" erzeugt, das alte ist ungültig")
 }
 
 // ---------- Einstellungen ----------
@@ -811,10 +834,11 @@ func (s *Server) neighborAdd(w http.ResponseWriter, r *http.Request) {
 		f.Neighbors = append(f.Neighbors, n)
 		return nil
 	})
-	s.done(w, r, "/settings", err, "Neighbor hinzugefügt")
+	s.done(w, r, "/settings", err, "Neighbor "+strings.TrimSpace(r.FormValue("address"))+" hinzugefügt")
 }
 
 func (s *Server) neighborDelete(w http.ResponseWriter, r *http.Request) {
+	addr := ""
 	err := s.Store.Update(func(st *store.State) error {
 		f, _, err := family(st, r.PathValue("fam"))
 		if err != nil {
@@ -822,13 +846,14 @@ func (s *Server) neighborDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		for i, n := range f.Neighbors {
 			if n.ID == r.PathValue("id") {
+				addr = n.Address
 				f.Neighbors = append(f.Neighbors[:i], f.Neighbors[i+1:]...)
 				return nil
 			}
 		}
 		return fmt.Errorf("neighbor nicht gefunden")
 	})
-	s.done(w, r, "/settings", err, "Neighbor gelöscht")
+	s.done(w, r, "/settings", err, "Neighbor "+addr+" gelöscht")
 }
 
 var ifaceName = func(v string) bool {

@@ -228,6 +228,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logins.Reset(clientIP(r))
 	log.Printf("oidc login: %s (sub %s, %s) von %s", user, claims.Sub, role, clientIP(r))
+	s.audit(AuditEntry{User: user, IP: clientIP(r), Action: "Anmeldung per OpenID", Detail: "rolle " + role})
 	s.setSessionCookie(w, r, newSession(st, session{User: user, Role: role, OIDC: true}), int(sessionTTL.Seconds()))
 	// Per HTML weiterleiten statt 303: sonst gilt die Weiterleitung als Teil der
 	// Cross-Site Navigation vom Provider und der SameSite=Strict Cookie fehlt.

@@ -262,9 +262,12 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 			if !sess.Admin() && !viewerPosts[r.URL.Path] {
+				s.auditRequest(r, "Zugriff verweigert (nur lesen)", r.URL.Path, true)
 				http.Error(w, "nur lesender zugriff", http.StatusForbidden)
 				return
 			}
+			s.auditPost(w, r, next)
+			return
 		}
 		next(w, r)
 	}

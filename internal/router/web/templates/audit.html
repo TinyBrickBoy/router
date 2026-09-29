@@ -1,0 +1,22 @@
+{{define "content"}}
+<h1>Protokoll</h1>
+<p class="muted">Anmeldungen und alle Änderungen über das Webinterface (die letzten 500). Passwörter, Tokens und Secrets werden nicht gespeichert. Datei: <code>audit.log</code> im Zustandsverzeichnis.</p>
+<section class="card">
+  <table>
+    <thead><tr><th>Zeit</th><th>Benutzer</th><th>IP</th><th>Aktion</th><th>Details</th></tr></thead>
+    <tbody>
+    {{range .Audit}}
+      <tr>
+        <td class="nowrap">{{.Time.Format "02.01.2006 15:04:05"}}</td>
+        <td>{{.User}}</td>
+        <td class="mono">{{.IP}}</td>
+        <td>{{if .Failed}}<span class="badge err">Fehler</span> {{end}}{{.Action}}</td>
+        <td class="mono small">{{.Detail}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="5" class="muted">Noch keine Einträge.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
