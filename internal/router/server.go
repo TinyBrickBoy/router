@@ -175,7 +175,8 @@ func (s *Server) parseTemplates() {
 			}
 			return t.Format("02.01.2006 15:04")
 		},
-		"isV6": func(c string) bool { return strings.Contains(c, ":") },
+		"isV6":  func(c string) bool { return strings.Contains(c, ":") },
+		"bytes": humanBytes,
 		"dict": func(kv ...any) map[string]any {
 			m := map[string]any{}
 			for i := 0; i+1 < len(kv); i += 2 {
@@ -584,6 +585,7 @@ type backendView struct {
 	Outdated    bool
 	SetupCmd    string
 	Assignments []store.Assignment
+	WG          *wgPeer
 }
 
 func (s *Server) baseURL(st store.State, r *http.Request) string {
@@ -609,11 +611,15 @@ func (s *Server) setupCommand(base, token string) string {
 }
 
 func (s *Server) backendViews(st store.State) []backendView {
+	peers := s.wgPeers(st)
 	s.seenMu.RLock()
 	defer s.seenMu.RUnlock()
 	var out []backendView
 	for _, b := range st.Backends {
 		v := backendView{Backend: b}
+		if p, ok := peers[b.PublicKey]; ok && b.PublicKey != "" {
+			v.WG = &p
+		}
 		if seen, ok := s.seen[b.ID]; ok {
 			v.LastSeen, v.Addr, v.Version, v.Arch = seen.At, seen.Addr, seen.Version, seen.Arch
 			v.Online = time.Since(seen.At) < 90*time.Second

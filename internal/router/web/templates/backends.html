@@ -26,6 +26,8 @@
     <dt>Zuletzt gesehen</dt><dd>{{ago .LastSeen}}{{if .Addr}} von <span class="mono">{{.Addr}}</span>{{end}}</dd>
     <dt>Agent</dt><dd>{{or .Version "–"}}{{if .Arch}} ({{.Arch}}){{end}} {{if .Outdated}}<span class="badge warn">Update verfügbar</span>{{end}}</dd>
     <dt>Tunnel IPs</dt><dd class="mono">{{.TunnelV4}} {{.TunnelV6}}</dd>
+    <dt>WireGuard</dt><dd>{{with .WG}}{{if .TunnelUp}}<span class="badge ok">Tunnel aktiv</span>{{else}}<span class="badge err">kein Handshake</span>{{end}} letzter Handshake {{ago .Handshake}}{{if .Endpoint}} von <span class="mono">{{.Endpoint}}</span>{{end}}{{else}}–{{end}}</dd>
+    {{with .WG}}<dt>Traffic</dt><dd>↓ {{bytes .RX}} empfangen · ↑ {{bytes .TX}} gesendet</dd>{{end}}
     <dt>Public Key</dt><dd class="mono">{{or .PublicKey "–"}}</dd>
   </dl>
   <h3>Zugewiesene IPs / Netze</h3>
