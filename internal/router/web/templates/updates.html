@@ -1,0 +1,67 @@
+{{define "head"}}{{if .Updates}}{{if .Updates.Restarting}}<meta http-equiv="refresh" content="3;url=/updates">{{end}}{{end}}{{end}}
+{{define "content"}}
+<h1>Updates</h1>
+<p class="muted">Updates laufen ohne Downtime: das neue Binary wird geprüft (SHA256 und Selbsttest), atomar ersetzt und der Prozess übernimmt sich selbst per <code>exec</code>. Der Router gibt dabei seinen offenen Port direkt weiter. BGP Sessions (BIRD), WireGuard Tunnel und Routen liegen im Kernel und laufen einfach weiter.</p>
+
+<section class="card">
+  <h2>Router</h2>
+  <dl class="grid">
+    <dt>Version</dt><dd>{{.Version}} ({{.Updates.Arch}})</dd>
+    <dt>SHA256</dt><dd class="mono">{{.Updates.SelfSHA}}</dd>
+    <dt>Binary</dt><dd class="mono">{{.Updates.Exe}}</dd>
+  </dl>
+  <div class="actions">
+    <form method="post" action="/updates/github"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="primary" {{if not .S.Settings.Update.GitHubRepo}}disabled{{end}}>Neuestes GitHub Release installieren</button></form>
+    {{if .Updates.HasBackup}}<form method="post" action="/updates/rollback" onsubmit="return confirm('Zur vorherigen Version zurückkehren?')"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Rollback auf vorherige Version</button></form>{{end}}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Binaries hochladen</h2>
+  <p class="muted">Dateinamen: <code>bgp-router-linux-{amd64,arm64,arm}</code> und <code>bgp-agent-linux-{amd64,arm64,arm}</code> (werden von <code>make dist</code> erzeugt). Ein Router Binary für diese Architektur wird sofort installiert, Agent Binaries werden an die Backends verteilt.</p>
+  <form method="post" action="/updates/upload" enctype="multipart/form-data" class="inline">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="file" name="files" multiple required>
+    <button class="primary">Hochladen und installieren</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Agents</h2>
+  <form method="post" action="/updates/settings" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>GitHub Repository<input name="github_repo" value="{{.S.Settings.Update.GitHubRepo}}" placeholder="besitzer/repo"></label>
+    <label class="check"><input type="checkbox" name="auto_update_agents" {{if .S.Settings.Update.AutoUpdateAgents}}checked{{end}}> Agents automatisch aktualisieren</label>
+    <div class="wide"><button>Speichern</button></div>
+  </form>
+  <table>
+    <thead><tr><th>Backend</th><th>Version</th><th>Arch</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {{range .Backends}}
+      <tr>
+        <td>{{.Name}}</td><td>{{or .Version "–"}}</td><td>{{or .Arch "–"}}</td>
+        <td>{{if not .Version}}<span class="badge">unbekannt</span>{{else if .Outdated}}{{if .UpdateRequested}}<span class="badge warn">Update läuft</span>{{else}}<span class="badge warn">veraltet</span>{{end}}{{else}}<span class="badge ok">aktuell</span>{{end}}</td>
+        <td class="actions">{{if .Outdated}}<form method="post" action="/backends/{{.ID}}/update"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Aktualisieren</button></form>{{end}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="5" class="muted">Keine Backends.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  <form method="post" action="/updates/agents"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Alle Agents aktualisieren</button></form>
+</section>
+
+<section class="card">
+  <h2>Verfügbare Binaries</h2>
+  <table>
+    <thead><tr><th>Datei</th><th>Größe</th><th>Geändert</th><th>SHA256</th></tr></thead>
+    <tbody>
+    {{range .Updates.Files}}
+      <tr><td class="mono">{{.Name}}</td><td>{{.Size}}</td><td>{{ago .Modified}}</td><td class="mono">{{short .SHA}}</td></tr>
+    {{else}}
+      <tr><td colspan="4" class="muted">Noch keine Binaries vorhanden.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

@@ -1,0 +1,42 @@
+{{define "content"}}
+<h1>Präfixe</h1>
+<p class="muted">Netze, die per BGP angekündigt werden. IPv4 Präfixe sollten mindestens /24, IPv6 mindestens /48 groß sein, sonst werden sie von den meisten Upstreams gefiltert. Für jedes Präfix muss ein ROA für deine ASN existieren (RPKI valid), sonst verwerfen viele Netze die Ankündigung.</p>
+
+<section class="card">
+  <h2>Präfix hinzufügen</h2>
+  <form method="post" action="/prefixes" class="inline">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input name="cidr" placeholder="203.0.113.0/24 oder 2001:db8::/48" required>
+    <input name="description" placeholder="Beschreibung">
+    <label class="check"><input type="checkbox" name="announce" checked> ankündigen</label>
+    <button class="primary">Hinzufügen</button>
+  </form>
+</section>
+
+<section class="card">
+  <div class="row between">
+    <h2>Präfixe</h2>
+    {{if .S.Prefixes}}<form method="post" action="/prefixes/rpki"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>RPKI prüfen (AS{{.S.Settings.ASN}})</button></form>{{end}}
+  </div>
+  <table>
+    <thead><tr><th>Netz</th><th>Familie</th><th>Beschreibung</th><th>Status</th><th>RPKI</th><th></th></tr></thead>
+    <tbody>
+    {{range .S.Prefixes}}
+      <tr>
+        <td class="mono">{{.CIDR}}</td>
+        <td>{{if isV6 .CIDR}}IPv6{{if not $.S.Settings.IPv6.Enabled}} <span class="badge warn">deaktiviert</span>{{end}}{{else}}IPv4{{if not $.S.Settings.IPv4.Enabled}} <span class="badge warn">deaktiviert</span>{{end}}{{end}}</td>
+        <td>{{.Description}}</td>
+        <td>{{if .Announce}}<span class="badge ok">wird angekündigt</span>{{else}}<span class="badge">pausiert</span>{{end}}</td>
+        <td>{{with index $.RPKI .CIDR}}<span class="badge {{if eq .Status "valid"}}ok{{else if eq .Status "unknown"}}warn{{else}}err{{end}}" title="{{range .ROAs}}{{.}}&#10;{{end}}{{.Err}}">{{.Status}}</span>{{else}}<span class="muted">–</span>{{end}}</td>
+        <td class="actions">
+          <form method="post" action="/prefixes/{{.ID}}/toggle"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>{{if .Announce}}Pausieren{{else}}Ankündigen{{end}}</button></form>
+          <form method="post" action="/prefixes/{{.ID}}/delete" onsubmit="return confirm('Präfix {{.CIDR}} löschen?')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="6" class="muted">Noch keine Präfixe eingetragen.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

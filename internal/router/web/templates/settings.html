@@ -1,0 +1,124 @@
+{{define "content"}}
+<h1>Einstellungen</h1>
+
+<section class="card">
+  <h2>Allgemein</h2>
+  <form method="post" action="/settings/general" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Eigene ASN<input name="asn" value="{{.S.Settings.ASN}}" required></label>
+    <label>Router ID (IPv4 des VPS)<input name="router_id" value="{{.S.Settings.RouterID}}" placeholder="198.51.100.1" required></label>
+    <label class="wide">Öffentliche URL dieses Webinterfaces (für Setup Skripte, leer = automatisch)<input name="public_url" value="{{.S.Settings.PublicURL}}" placeholder="https://router.example.com"></label>
+    <div class="wide"><button class="primary">Speichern</button></div>
+  </form>
+</section>
+
+{{template "family" (dict "Name" "IPv4" "Key" "ipv4" "F" .S.Settings.IPv4 "CSRF" .CSRF "Ph" "169.254.169.254" "PhSrc" "198.51.100.1")}}
+{{template "family" (dict "Name" "IPv6" "Key" "ipv6" "F" .S.Settings.IPv6 "CSRF" .CSRF "Ph" "2001:19f0:ffff::1" "PhSrc" "2001:db8::1")}}
+
+<section class="card">
+  <h2>WireGuard</h2>
+  <form method="post" action="/settings/wireguard" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Interface<input name="interface" value="{{.S.Settings.WireGuard.Interface}}" required></label>
+    <label>Port<input name="listen_port" type="number" value="{{.S.Settings.WireGuard.ListenPort}}" required></label>
+    <label>Endpoint (öffentliche IP oder Hostname, leer = automatisch)<input name="endpoint" value="{{.S.Settings.WireGuard.Endpoint}}" placeholder="198.51.100.1"></label>
+    <label>MTU<input name="mtu" type="number" value="{{.S.Settings.WireGuard.MTU}}" required></label>
+    <label>Tunnelnetz IPv4<input name="tunnel_v4" value="{{.S.Settings.WireGuard.TunnelV4}}" placeholder="10.200.0.0/24"></label>
+    <label>Tunnelnetz IPv6<input name="tunnel_v6" value="{{.S.Settings.WireGuard.TunnelV6}}" placeholder="fd00:200::/64"></label>
+    <div class="wide"><button class="primary">Speichern</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>RPKI {{if .S.Settings.RPKI.RTRHost}}<span class="badge ok">aktiv</span>{{else}}<span class="badge">aus</span>{{end}}</h2>
+  <p class="muted">Optionaler RTR Validator (z.B. Routinator, StayRTR, rpki-client). Ist er gesetzt, kündigt BIRD Präfixe nicht an, die für AS{{.S.Settings.ASN}} RPKI invalid sind. Leer lassen zum Deaktivieren. Der ROA Status lässt sich auch ohne Validator unter <a href="/prefixes">Präfixe</a> prüfen.</p>
+  <form method="post" action="/settings/rpki" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>RTR Host<input name="rtr_host" value="{{.S.Settings.RPKI.RTRHost}}" placeholder="127.0.0.1"></label>
+    <label>RTR Port<input name="rtr_port" type="number" value="{{if .S.Settings.RPKI.RTRPort}}{{.S.Settings.RPKI.RTRPort}}{{end}}" placeholder="323"></label>
+    <div class="wide"><button class="primary">Speichern</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>System</h2>
+  <form method="post" action="/settings/system" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Dummy Interface für lokale IPs<input name="dummy_interface" value="{{.S.Settings.System.DummyInterface}}" required></label>
+    <label class="check"><input type="checkbox" name="manage_bird" {{if .S.Settings.System.ManageBird}}checked{{end}}> BIRD Konfiguration verwalten</label>
+    <label>BIRD Config<input name="bird_config" value="{{.S.Settings.System.BirdConfig}}"></label>
+    <label>bird Binary<input name="bird_binary" value="{{.S.Settings.System.BirdBinary}}"></label>
+    <label>birdc Binary<input name="birdc_binary" value="{{.S.Settings.System.BirdcBinary}}"></label>
+    <div class="wide"><button class="primary">Speichern</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>OpenID Connect Login {{if .S.Settings.OIDC.Enabled}}<span class="badge ok">aktiv</span>{{else}}<span class="badge">aus</span>{{end}}</h2>
+  <p class="muted">Anmeldung über einen OpenID Provider (Keycloak, Authentik, Authelia, Zitadel, Google, Microsoft …). Beim Provider einen vertraulichen Client mit dieser Redirect URI anlegen:</p>
+  <div class="copy"><input readonly value="{{.Callback}}" onclick="this.select()"><button type="button" onclick="navigator.clipboard.writeText(this.previousElementSibling.value);this.textContent='Kopiert'">Kopieren</button></div>
+  {{if not .S.Settings.PublicURL}}<p class="muted">Tipp: oben unter Allgemein die öffentliche URL setzen, damit die Redirect URI fest ist.</p>{{end}}
+  <form method="post" action="/settings/oidc" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label class="check wide"><input type="checkbox" name="enabled" {{if .S.Settings.OIDC.Enabled}}checked{{end}}> OpenID Login aktivieren</label>
+    <label>Issuer URL<input name="issuer" value="{{.S.Settings.OIDC.Issuer}}" placeholder="https://auth.example.com/realms/main"></label>
+    <label>Client ID<input name="client_id" value="{{.S.Settings.OIDC.ClientID}}"></label>
+    <label>Client Secret {{if .S.Settings.OIDC.ClientSecret}}(gesetzt, leer lassen = unverändert){{end}}<input name="client_secret" type="password" autocomplete="off"></label>
+    <label>Erlaubte Benutzer (E-Mail, Benutzername oder sub)<input name="allowed_users" value="{{.S.Settings.OIDC.AllowedUsers}}" placeholder="admin@example.com, max"></label>
+    <label>Erlaubte Gruppen (groups Claim, optional)<input name="allowed_groups" value="{{.S.Settings.OIDC.AllowedGroups}}" placeholder="network-admins"></label>
+    <label class="check"><input type="checkbox" name="disable_password" {{if .S.Settings.OIDC.DisablePassword}}checked{{end}}> Passwort Login deaktivieren</label>
+    {{if .S.Settings.OIDC.ClientSecret}}<label class="check"><input type="checkbox" name="clear_secret"> Client Secret löschen</label>{{end}}
+    <p class="muted wide">Notfallzugang: <code>bgp-router passwd</code> auf dem VPS setzt ein neues Passwort und aktiviert den Passwort Login wieder.</p>
+    <div class="wide"><button class="primary">Speichern</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Passwort ändern</h2>
+  <form method="post" action="/settings/password" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Aktuelles Passwort<input type="password" name="current" autocomplete="current-password" required></label>
+    <label>Neues Passwort<input type="password" name="new" autocomplete="new-password" minlength="8" required></label>
+    <label>Wiederholen<input type="password" name="repeat" autocomplete="new-password" minlength="8" required></label>
+    <div class="wide"><button class="primary">Ändern</button></div>
+  </form>
+</section>
+{{end}}
+
+{{define "family"}}
+<section class="card">
+  <div class="row between">
+    <h2>{{.Name}} {{if .F.Enabled}}<span class="badge ok">aktiv</span>{{else}}<span class="badge">deaktiviert</span>{{end}}</h2>
+    <form method="post" action="/settings/family/{{.Key}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      {{if not .F.Enabled}}<input type="hidden" name="enabled" value="1">{{end}}
+      <button>{{if .F.Enabled}}Deaktivieren{{else}}Aktivieren{{end}}</button>
+    </form>
+  </div>
+  <table>
+    <thead><tr><th>Name</th><th>Neighbor</th><th>Remote AS</th><th>Multihop</th><th>Quelle</th><th>Passwort</th><th></th></tr></thead>
+    <tbody>
+    {{range .F.Neighbors}}
+      <tr>
+        <td>{{.Name}}</td><td class="mono">{{.Address}}</td><td>AS{{.RemoteASN}}</td>
+        <td>{{if .Multihop}}{{.Multihop}}{{else}}–{{end}}</td><td class="mono">{{or .SourceAddress "–"}}</td>
+        <td>{{if .Password}}gesetzt{{else}}–{{end}}</td>
+        <td class="actions"><form method="post" action="/settings/neighbors/{{$.Key}}/{{.ID}}/delete" onsubmit="return confirm('Neighbor löschen?')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form></td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7" class="muted">Keine Neighbors.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  <form method="post" action="/settings/neighbors/{{.Key}}" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Name<input name="name" placeholder="upstream1"></label>
+    <label>Neighbor Adresse<input name="address" placeholder="{{.Ph}}" required></label>
+    <label>Remote ASN<input name="remote_asn" placeholder="64515" required></label>
+    <label>Multihop (0 = direkt)<input name="multihop" type="number" min="0" max="255" value="0"></label>
+    <label>Quelladresse (optional)<input name="source" placeholder="{{.PhSrc}}"></label>
+    <label>BGP Passwort (optional)<input name="password" type="password" autocomplete="off"></label>
+    <div class="wide"><button class="primary">Neighbor hinzufügen</button></div>
+  </form>
+</section>
+{{end}}

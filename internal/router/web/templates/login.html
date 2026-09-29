@@ -1,0 +1,16 @@
+{{define "content"}}
+<div class="login card">
+  <h1>BGP Router</h1>
+  {{if .OIDC}}
+  <a class="button primary" href="/auth/login">Mit OpenID anmelden</a>
+  {{end}}
+  {{if .PWLogin}}
+  {{if .OIDC}}<div class="or">oder</div>{{end}}
+  <form method="post" action="/login">
+    <label>Benutzername<input name="username" value="admin" autocomplete="username" required></label>
+    <label>Passwort<input type="password" name="password" autocomplete="current-password" {{if not .OIDC}}autofocus{{end}} required></label>
+    <button {{if not .OIDC}}class="primary"{{end}}>Anmelden</button>
+  </form>
+  {{end}}
+</div>
+{{end}}
