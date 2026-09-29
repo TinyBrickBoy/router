@@ -21,7 +21,9 @@
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <label>Interface<input name="interface" value="{{.S.Settings.WireGuard.Interface}}" required></label>
     <label>Port<input name="listen_port" type="number" value="{{.S.Settings.WireGuard.ListenPort}}" required></label>
-    <label>Endpoint (öffentliche IP oder Hostname, leer = automatisch)<input name="endpoint" value="{{.S.Settings.WireGuard.Endpoint}}" placeholder="198.51.100.1"></label>
+    <label>Endpoint (öffentliche IP oder Hostname, leer = Host der Router URL)<input name="endpoint" value="{{.S.Settings.WireGuard.Endpoint}}" placeholder="198.51.100.1"></label>
+    <label>Öffentlicher Port (leer = Port oben)<input name="endpoint_port" type="number" min="1" max="65535" value="{{with .S.Settings.WireGuard.EndpointPort}}{{.}}{{end}}" placeholder="{{.S.Settings.WireGuard.ListenPort}}"></label>
+    <p class="wide muted">Liegt ein Reverse Proxy oder eine Portweiterleitung auf einem anderen Server vor dem Router, trag hier die Adresse ein, unter der die Backends den WireGuard UDP Port wirklich erreichen. Die Agents übernehmen sie beim nächsten Sync (max. 30 s).</p>
     <label>MTU<input name="mtu" type="number" value="{{.S.Settings.WireGuard.MTU}}" required></label>
     <label>Tunnelnetz IPv4<input name="tunnel_v4" value="{{.S.Settings.WireGuard.TunnelV4}}" placeholder="10.200.0.0/24"></label>
     <label>Tunnelnetz IPv6<input name="tunnel_v6" value="{{.S.Settings.WireGuard.TunnelV6}}" placeholder="fd00:200::/64"></label>

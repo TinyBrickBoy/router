@@ -45,6 +45,8 @@ If you already cloned the repo and have Go installed: `make dist && sudo ./scrip
 
 Firewall: open TCP 8080 (web interface) and UDP 51820 (WireGuard).
 
+If the backends reach the WireGuard port through another address, e.g. a port forwarding or proxy on a different server, set the public IP or hostname and the public port under **Einstellungen → WireGuard** (`Endpoint`, `Öffentlicher Port`). Otherwise the agents use the host of the router URL and the listen port.
+
 ### HTTPS
 
 By default the web interface uses **HTTPS with a self-signed certificate** (`https://<vps-ip>:8080`), so the browser warns once. Compare the fingerprint with the installer output first. The setup script and the agents **pin the public key** of this certificate, so their connection to the router is protected against man-in-the-middle attacks even without a domain.

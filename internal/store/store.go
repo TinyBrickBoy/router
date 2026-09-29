@@ -100,9 +100,12 @@ type WGSettings struct {
 	Interface  string `json:"interface"`
 	ListenPort int    `json:"listen_port"`
 	Endpoint   string `json:"endpoint"` // öffentliche IP/Hostname des VPS
-	TunnelV4   string `json:"tunnel_v4"`
-	TunnelV6   string `json:"tunnel_v6"`
-	MTU        int    `json:"mtu"`
+	// EndpointPort ist der öffentlich erreichbare UDP Port (0 = ListenPort), z.B.
+	// wenn eine Portweiterleitung auf einem anderen Server davor sitzt.
+	EndpointPort int    `json:"endpoint_port,omitempty"`
+	TunnelV4     string `json:"tunnel_v4"`
+	TunnelV6     string `json:"tunnel_v6"`
+	MTU          int    `json:"mtu"`
 }
 
 type SystemSettings struct {
