@@ -117,6 +117,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/rpki", a(s.settingsRPKI))
 	mux.HandleFunc("POST /settings/oidc", a(s.settingsOIDC))
 	mux.HandleFunc("POST /settings/password", a(s.settingsPassword))
+	mux.HandleFunc("POST /settings/metrics", a(s.settingsMetrics))
 	mux.HandleFunc("POST /settings/users", a(s.userAdd))
 	mux.HandleFunc("POST /settings/users/{name}/delete", a(s.userDelete))
 	mux.HandleFunc("POST /settings/users/{name}/role", a(s.userRole))
@@ -135,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /setup/{token}", s.setupScript)
 	mux.HandleFunc("GET /download/{file}", s.download)
 	mux.HandleFunc("POST /api/agent/sync", s.agentSync)
+	mux.HandleFunc("GET /metrics", s.metrics)
 
 	return securityHeaders(mux)
 }
@@ -175,8 +177,12 @@ func (s *Server) parseTemplates() {
 			}
 			return t.Format("02.01.2006 15:04")
 		},
-		"isV6":  func(c string) bool { return strings.Contains(c, ":") },
-		"bytes": humanBytes,
+		"isV6":      func(c string) bool { return strings.Contains(c, ":") },
+		"bytes":     humanBytes,
+		"hasPrefix": strings.HasPrefix,
+		"trimScheme": func(u string) string {
+			return strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+		},
 		"dict": func(kv ...any) map[string]any {
 			m := map[string]any{}
 			for i := 0; i+1 < len(kv); i += 2 {
@@ -221,6 +227,7 @@ type page struct {
 	OIDC     bool
 	PWLogin  bool
 	Callback string
+	BaseURL  string
 	RPKI     map[string]RPKIResult
 	Backends []backendView
 	Updates  *updatesView
@@ -704,6 +711,10 @@ func (s *Server) backendToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	p := s.newPage(r, "Einstellungen", "settings")
 	p.Callback = s.redirectURI(p.S, r)
+	p.BaseURL = s.baseURL(p.S, r)
+	if !p.IsAdmin {
+		p.S.Settings.MetricsToken = "" // Geheimnis nur für Admins
+	}
 	s.render(w, "settings", p)
 }
 

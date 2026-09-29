@@ -76,6 +76,26 @@
 </section>
 
 <section class="card">
+  <h2>Prometheus Metrics {{if .S.Settings.MetricsToken}}<span class="badge ok">aktiv</span>{{else}}<span class="badge">aus</span>{{end}}</h2>
+  <p class="muted">Kennzahlen zu BGP Sessions, Präfixen, RPKI, Backends und WireGuard Tunneln unter <code>{{.BaseURL}}/metrics</code>. Prometheus schickt das Token als Bearer Token mit.</p>
+  {{if .S.Settings.MetricsToken}}
+  <label>Metrics Token</label>
+  <div class="copy"><input readonly value="{{.S.Settings.MetricsToken}}" data-select><button type="button" data-copy>Kopieren</button></div>
+  <details><summary>Beispiel für prometheus.yml</summary><pre>scrape_configs:
+  - job_name: bgp-router
+    scheme: {{if hasPrefix .BaseURL "https"}}https{{else}}http{{end}}
+    authorization:
+      credentials: "{{.S.Settings.MetricsToken}}"
+    static_configs:
+      - targets: ["{{trimScheme .BaseURL}}"]</pre></details>
+  {{end}}
+  <div class="actions">
+    <form method="post" action="/settings/metrics"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="generate"><button class="primary">{{if .S.Settings.MetricsToken}}Neues Token erzeugen{{else}}Aktivieren{{end}}</button></form>
+    {{if .S.Settings.MetricsToken}}<form method="post" action="/settings/metrics" data-confirm="Metrics Endpoint deaktivieren?"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="danger">Deaktivieren</button></form>{{end}}
+  </div>
+</section>
+
+<section class="card">
   <h2>Benutzer</h2>
   <p class="muted">Admins dürfen alles, Viewer nur lesen. Der Hauptbenutzer ist immer Admin.</p>
   <table>

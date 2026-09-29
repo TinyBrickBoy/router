@@ -41,6 +41,8 @@ type Settings struct {
 	Update    UpdateSettings `json:"update"`
 	RPKI      RPKISettings   `json:"rpki"`
 	OIDC      OIDCSettings   `json:"oidc"`
+	// MetricsToken schützt /metrics (leer = Endpoint aus).
+	MetricsToken string `json:"metrics_token"`
 }
 
 // OIDCSettings: Login über einen OpenID Connect Provider.
