@@ -50,6 +50,7 @@ type Server struct {
 	rpki   rpkiCache
 	oidc   oidcClient
 	logins loginLimiter
+	pins   pinCache
 }
 
 type agentSeen struct {
@@ -550,10 +551,11 @@ func (s *Server) baseURL(st store.State, r *http.Request) string {
 
 // setupCommand pinnt beim selbst signierten Zertifikat den Public Key des Routers,
 // damit schon das Setup Skript nicht per MITM ausgetauscht werden kann.
+// Hinter einem Reverse Proxy mit CA Zertifikat wird normal gegen die CA geprüft.
 func (s *Server) setupCommand(base, token string) string {
 	u := base + "/setup/" + token
-	if s.Pin != "" && strings.HasPrefix(base, "https://") {
-		return fmt.Sprintf("curl -fsSLk --pinnedpubkey %s %s | sudo bash", shq("sha256//"+s.Pin), shq(u))
+	if pin := s.pinFor(base); pin != "" {
+		return fmt.Sprintf("curl -fsSLk --pinnedpubkey %s %s | sudo bash", shq("sha256//"+pin), shq(u))
 	}
 	return fmt.Sprintf("curl -fsSL %s | sudo bash", shq(u))
 }
