@@ -1048,12 +1048,25 @@ func (s *Server) settingsWireGuard(w http.ResponseWriter, r *http.Request) {
 			}
 			t6 = p.Masked().String()
 		}
+		epPort := 0
+		if v := strings.TrimSpace(r.FormValue("endpoint_port")); v != "" {
+			if epPort, err = atoi(v); err != nil || epPort < 0 || epPort > 65535 {
+				return fmt.Errorf("ungültiger öffentlicher port")
+			}
+		}
 		ep := strings.TrimSpace(r.FormValue("endpoint"))
 		if ep != "" && !validHost(ep) {
-			return fmt.Errorf("endpoint muss eine ip oder ein hostname sein (ohne port)")
+			// auch host:port bzw. [v6]:port erlauben
+			h, pstr, err := net.SplitHostPort(ep)
+			p, perr := atoi(pstr)
+			if err != nil || !validHost(h) || perr != nil || p < 1 || p > 65535 {
+				return fmt.Errorf("endpoint muss eine ip oder ein hostname sein (optional mit :port)")
+			}
+			ep, epPort = h, p
 		}
 		wg.Interface, wg.ListenPort, wg.MTU, wg.TunnelV4, wg.TunnelV6 = iface, port, mtu, t4, t6
 		wg.Endpoint = strings.Trim(ep, "[]")
+		wg.EndpointPort = epPort
 		return st.AllocateTunnelIPs()
 	})
 	if err == nil && oldIface != "" && oldIface != s.Store.Get().Settings.WireGuard.Interface {

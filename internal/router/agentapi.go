@@ -123,7 +123,11 @@ func (s *Server) endpoint(st store.State, r *http.Request) string {
 	if !validHost(host) {
 		return ""
 	}
-	return net.JoinHostPort(host, strconv.Itoa(st.Settings.WireGuard.ListenPort))
+	port := st.Settings.WireGuard.EndpointPort
+	if port <= 0 {
+		port = st.Settings.WireGuard.ListenPort
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // shq quotet einen Wert für eine Shell (in einfachen Anführungszeichen).
