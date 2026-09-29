@@ -155,7 +155,7 @@ func (w *auditWriter) WriteHeader(code int) {
 func (s *Server) auditPost(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 	aw := &auditWriter{ResponseWriter: w}
 	next(aw, r)
-	if r.URL.Path == "/logout" {
+	if r.URL.Path == "/logout" || (r.URL.Path == "/backup/download" && aw.status == http.StatusOK) {
 		return // wird im Handler protokolliert
 	}
 	action, failed := r.Method+" "+r.URL.Path, false

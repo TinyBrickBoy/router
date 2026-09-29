@@ -128,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/users/{name}/password", a(s.userPassword))
 
 	mux.HandleFunc("GET /audit", a(s.auditPage))
+	mux.HandleFunc("POST /backup/download", a(s.backupDownload))
+	mux.HandleFunc("POST /backup/restore", a(s.backupRestore))
 
 	mux.HandleFunc("GET /updates", a(s.updatesPage))
 	mux.HandleFunc("POST /updates/settings", a(s.updateSettings))
@@ -285,7 +287,7 @@ func (s *Server) done(w http.ResponseWriter, r *http.Request, back string, err e
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 	o := s.Store.Get().Settings.OIDC
-	p := &page{Title: "Anmelden", Err: r.URL.Query().Get("err"), Version: version.Version,
+	p := &page{Title: "Anmelden", Err: r.URL.Query().Get("err"), Msg: r.URL.Query().Get("msg"), Version: version.Version,
 		OIDC: o.Enabled, PWLogin: !(o.Enabled && o.DisablePassword)}
 	s.render(w, "login", p)
 }

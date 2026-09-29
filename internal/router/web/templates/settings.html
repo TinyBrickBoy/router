@@ -76,6 +76,23 @@
 </section>
 
 <section class="card">
+  <h2>Backup und Wiederherstellung</h2>
+  <p class="muted">Das Backup enthält die komplette Konfiguration mit Benutzern, Schlüsseln, Tokens und dem selbst signierten TLS Zertifikat. Es wird mit AES-256-GCM verschlüsselt, der Schlüssel stammt aus deiner Passphrase. Damit lässt sich der Router auf einen neuen VPS umziehen, ohne die Backends neu einzurichten. Ohne Passphrase ist das Backup nicht zu retten.</p>
+  <form method="post" action="/backup/download" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Passphrase (mindestens 12 Zeichen)<input type="password" name="passphrase" minlength="12" autocomplete="new-password" required></label>
+    <label>Passphrase wiederholen<input type="password" name="passphrase_repeat" minlength="12" autocomplete="new-password" required></label>
+    <div class="wide"><button class="primary">Backup herunterladen</button></div>
+  </form>
+  <form method="post" action="/backup/restore" enctype="multipart/form-data" class="grid-form" data-confirm="Die komplette aktuelle Konfiguration wird durch das Backup ersetzt. Fortfahren?">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Backup Datei<input type="file" name="file" accept=".bak" required></label>
+    <label>Passphrase<input type="password" name="passphrase" autocomplete="off" required></label>
+    <div class="wide"><button class="danger">Backup wiederherstellen</button></div>
+  </form>
+</section>
+
+<section class="card">
   <h2>Benachrichtigungen</h2>
   <p class="muted">Meldet, wenn eine BGP Session länger als eine Minute weg ist, ein Backend offline geht oder ein angekündigtes Präfix RPKI invalid wird (Prüfung alle 6 Stunden), und wenn sich das wieder erholt. Webhook URLs und Passwort werden nach dem Speichern nicht mehr angezeigt, leer lassen = unverändert.</p>
   <form method="post" action="/settings/notify" class="grid-form">

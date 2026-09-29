@@ -249,8 +249,11 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		r = r.WithContext(context.WithValue(r.Context(), sessionCtxKey{}, sess))
 		if r.Method == http.MethodPost {
 			limit := int64(1 << 20)
-			if r.URL.Path == "/updates/upload" {
+			switch r.URL.Path {
+			case "/updates/upload":
 				limit = 400 << 20
+			case "/backup/restore":
+				limit = backupMaxSize + 1<<20
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			tok := r.Header.Get("X-CSRF-Token")
