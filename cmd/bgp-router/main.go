@@ -140,6 +140,7 @@ func run(args []string) {
 			return err
 		}
 		log.Printf("starte neu mit neuem binary (%s)", update.Executable())
+		srv.SaveSeen()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = httpSrv.Shutdown(ctx) // wartet auf laufende Anfragen, neue warten im Kernel Backlog
 		cancel()
@@ -158,6 +159,8 @@ func run(args []string) {
 	}
 
 	go applier.Loop()
+	stop := make(chan struct{})
+	srv.Start(stop)
 
 	if inherited {
 		log.Printf("bgp-router %s nach update gestartet, übernehme %s", version.Version, rawLn.Addr())
@@ -170,6 +173,8 @@ func run(args []string) {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	log.Printf("beende (netzwerkkonfiguration bleibt bestehen)")
+	close(stop)
+	srv.SaveSeen()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)

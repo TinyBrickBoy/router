@@ -56,16 +56,22 @@ type Server struct {
 }
 
 type agentSeen struct {
-	At      time.Time
-	Addr    string
-	Version string
-	SHA     string
-	Arch    string
+	At      time.Time `json:"at"`
+	Addr    string    `json:"addr"`
+	Version string    `json:"version"`
+	SHA     string    `json:"sha256"`
+	Arch    string    `json:"arch"`
+}
+
+// Start startet die Hintergrundaufgaben (nach Handler aufrufen).
+func (s *Server) Start(stop <-chan struct{}) {
+	go s.seenLoop(stop)
 }
 
 // Handler liefert den HTTP Handler.
 func (s *Server) Handler() http.Handler {
 	s.seen = map[string]agentSeen{}
+	s.loadSeen()
 	s.distCache = map[string]distEntry{}
 	s.rpki.m = map[string]RPKIResult{}
 	s.parseTemplates()
