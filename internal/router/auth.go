@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"net/netip"
 	"sync"
 
@@ -8,6 +9,7 @@ import (
 	"crypto/pbkdf2"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"net/http"
 	"strconv"
@@ -24,8 +26,8 @@ const (
 	passwordMinLen = 8
 )
 
-// SetPassword setzt ein neues Admin Passwort.
-func SetPassword(a *store.Admin, password string) error {
+// SetPassword setzt ein neues Passwort.
+func SetPassword(a *store.User, password string) error {
 	a.Salt = store.RandomHex(16)
 	a.Iterations = pbkdf2Iter
 	key, err := pbkdf2.Key(sha256.New, password, []byte(a.Salt), a.Iterations, 32)
@@ -39,7 +41,7 @@ func SetPassword(a *store.Admin, password string) error {
 	return nil
 }
 
-func checkPassword(a store.Admin, password string) bool {
+func checkPassword(a store.User, password string) bool {
 	if a.PasswordHash == "" {
 		return false
 	}
@@ -56,23 +58,81 @@ func mac(secret string, parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Passwort-Hash und SessionEpoch fließen in die Signatur ein: ein Passwortwechsel
-// oder ein Logout beendet alle Sessions.
-func newSession(st store.State) string {
-	exp := strconv.FormatInt(time.Now().Add(sessionTTL).Unix(), 10)
-	return exp + "." + mac(st.SecretKey, "session", exp, st.Admin.PasswordHash, strconv.Itoa(st.Admin.SessionEpoch))
+// session beschreibt den angemeldeten Benutzer.
+type session struct {
+	User string
+	Role string
+	OIDC bool
 }
 
-func validSession(st store.State, v string) bool {
-	exp, sig, ok := strings.Cut(v, ".")
-	if !ok {
-		return false
+func (s session) Admin() bool { return s.Role == store.RoleAdmin }
+
+// sessionKey liefert die Werte, die in die Signatur einfließen. Bei lokalen
+// Benutzern beenden ein Passwortwechsel oder ein Logout alle ihre Sessions,
+// bei OpenID Benutzern ein Logout alle OpenID Sessions.
+func sessionKey(st store.State, kind, user, role string) (string, bool) {
+	switch kind {
+	case "l":
+		u := st.User(user)
+		if u == nil || u.PasswordHash == "" {
+			return "", false
+		}
+		return u.PasswordHash + "|" + strconv.Itoa(u.SessionEpoch), true
+	case "o":
+		if !st.Settings.OIDC.Enabled || (role != store.RoleAdmin && role != store.RoleViewer) {
+			return "", false
+		}
+		return role + "|" + strconv.Itoa(st.OIDCEpoch), true
 	}
-	n, err := strconv.ParseInt(exp, 10, 64)
+	return "", false
+}
+
+func newSession(st store.State, sess session) string {
+	exp := strconv.FormatInt(time.Now().Add(sessionTTL).Unix(), 10)
+	kind, role := "l", "-"
+	if sess.OIDC {
+		kind, role = "o", sess.Role
+	}
+	user := base64.RawURLEncoding.EncodeToString([]byte(sess.User))
+	key, _ := sessionKey(st, kind, sess.User, role)
+	payload := strings.Join([]string{exp, kind, user, role}, ".")
+	return payload + "." + mac(st.SecretKey, "session", payload, key)
+}
+
+func parseSession(st store.State, v string) (session, bool) {
+	parts := strings.Split(v, ".")
+	if len(parts) != 5 {
+		return session{}, false
+	}
+	n, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || time.Now().Unix() > n {
-		return false
+		return session{}, false
 	}
-	return hmac.Equal([]byte(sig), []byte(mac(st.SecretKey, "session", exp, st.Admin.PasswordHash, strconv.Itoa(st.Admin.SessionEpoch))))
+	userB, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return session{}, false
+	}
+	kind, user, role := parts[1], string(userB), parts[3]
+	key, ok := sessionKey(st, kind, user, role)
+	if !ok {
+		return session{}, false
+	}
+	payload := strings.Join(parts[:4], ".")
+	if !hmac.Equal([]byte(parts[4]), []byte(mac(st.SecretKey, "session", payload, key))) {
+		return session{}, false
+	}
+	if kind == "l" {
+		return session{User: user, Role: st.UserRole(user)}, true
+	}
+	return session{User: user, Role: role, OIDC: true}, true
+}
+
+type sessionCtxKey struct{}
+
+// currentSession liefert den angemeldeten Benutzer (von requireAuth gesetzt).
+func currentSession(r *http.Request) session {
+	s, _ := r.Context().Value(sessionCtxKey{}).(session)
+	return s
 }
 
 func csrfToken(st store.State, r *http.Request) string {
@@ -168,19 +228,32 @@ func clientIP(r *http.Request) string {
 	return ip
 }
 
-// requireAuth schützt die WebUI. POST Anfragen brauchen zusätzlich ein gültiges CSRF Token.
+// Diese Aktionen dürfen auch Viewer ausführen.
+var viewerPosts = map[string]bool{"/logout": true, "/settings/password": true}
+
+// requireAuth schützt die WebUI. POST Anfragen brauchen zusätzlich ein gültiges
+// CSRF Token und (außer eigenem Passwort und Abmelden) die Rolle Admin.
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		st := s.Store.Get()
 		c, err := r.Cookie(sessionCookie)
-		if err != nil || !validSession(st, c.Value) {
+		if err != nil {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
+		sess, ok := parseSession(st, c.Value)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), sessionCtxKey{}, sess))
 		if r.Method == http.MethodPost {
 			limit := int64(1 << 20)
-			if r.URL.Path == "/updates/upload" {
+			switch r.URL.Path {
+			case "/updates/upload":
 				limit = 400 << 20
+			case "/backup/restore":
+				limit = backupMaxSize + 1<<20
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			tok := r.Header.Get("X-CSRF-Token")
@@ -191,7 +264,25 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 				http.Error(w, "ungültiges CSRF Token, bitte Seite neu laden", http.StatusForbidden)
 				return
 			}
+			if !sess.Admin() && !viewerPosts[r.URL.Path] {
+				s.auditRequest(r, "Zugriff verweigert (nur lesen)", r.URL.Path, true)
+				http.Error(w, "nur lesender zugriff", http.StatusForbidden)
+				return
+			}
+			s.auditPost(w, r, next)
+			return
 		}
 		next(w, r)
 	}
+}
+
+// requireAdmin schützt Seiten, die nur Admins sehen dürfen (z.B. Backup).
+func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		if !currentSession(r).Admin() {
+			http.Error(w, "nur für admins", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	})
 }

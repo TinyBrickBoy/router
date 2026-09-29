@@ -66,6 +66,8 @@
     <label>Client Secret {{if .S.Settings.OIDC.ClientSecret}}(gesetzt, leer lassen = unverändert){{end}}<input name="client_secret" type="password" autocomplete="off"></label>
     <label>Erlaubte Benutzer (E-Mail, Benutzername oder sub)<input name="allowed_users" value="{{.S.Settings.OIDC.AllowedUsers}}" placeholder="admin@example.com, max"></label>
     <label>Erlaubte Gruppen (groups Claim, optional)<input name="allowed_groups" value="{{.S.Settings.OIDC.AllowedGroups}}" placeholder="network-admins"></label>
+    <label>Nur lesende Benutzer (optional)<input name="viewer_users" value="{{.S.Settings.OIDC.ViewerUsers}}" placeholder="noc@example.com"></label>
+    <label>Nur lesende Gruppen (optional)<input name="viewer_groups" value="{{.S.Settings.OIDC.ViewerGroups}}" placeholder="noc"></label>
     <label class="check"><input type="checkbox" name="disable_password" {{if .S.Settings.OIDC.DisablePassword}}checked{{end}}> Passwort Login deaktivieren</label>
     {{if .S.Settings.OIDC.ClientSecret}}<label class="check"><input type="checkbox" name="clear_secret"> Client Secret löschen</label>{{end}}
     <p class="muted wide">Notfallzugang: <code>bgp-router passwd</code> auf dem VPS setzt ein neues Passwort und aktiviert den Passwort Login wieder.</p>
@@ -74,8 +76,112 @@
 </section>
 
 <section class="card">
-  <h2>Passwort ändern</h2>
-  <form method="post" action="/settings/password" class="grid-form">
+  <h2>Backup und Wiederherstellung</h2>
+  <p class="muted">Das Backup enthält die komplette Konfiguration mit Benutzern, Schlüsseln, Tokens und dem selbst signierten TLS Zertifikat. Es wird mit AES-256-GCM verschlüsselt, der Schlüssel stammt aus deiner Passphrase. Damit lässt sich der Router auf einen neuen VPS umziehen, ohne die Backends neu einzurichten. Ohne Passphrase ist das Backup nicht zu retten.</p>
+  <form method="post" action="/backup/download" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Passphrase (mindestens 12 Zeichen)<input type="password" name="passphrase" minlength="12" autocomplete="new-password" required></label>
+    <label>Passphrase wiederholen<input type="password" name="passphrase_repeat" minlength="12" autocomplete="new-password" required></label>
+    <div class="wide"><button class="primary">Backup herunterladen</button></div>
+  </form>
+  <form method="post" action="/backup/restore" enctype="multipart/form-data" class="grid-form" data-confirm="Die komplette aktuelle Konfiguration wird durch das Backup ersetzt. Fortfahren?">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Backup Datei<input type="file" name="file" accept=".bak" required></label>
+    <label>Passphrase<input type="password" name="passphrase" autocomplete="off" required></label>
+    <div class="wide"><button class="danger">Backup wiederherstellen</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Benachrichtigungen</h2>
+  <p class="muted">Meldet, wenn eine BGP Session länger als eine Minute weg ist, ein Backend offline geht oder ein angekündigtes Präfix RPKI invalid wird (Prüfung alle 6 Stunden), und wenn sich das wieder erholt. Webhook URLs und Passwort werden nach dem Speichern nicht mehr angezeigt, leer lassen = unverändert.</p>
+  <form method="post" action="/settings/notify" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Discord Webhook URL {{if .NotifyDiscord}}(gesetzt){{end}}<input name="discord_webhook" type="password" autocomplete="off" placeholder="https://discord.com/api/webhooks/…"></label>
+    {{if .NotifyDiscord}}<label class="check"><input type="checkbox" name="clear_discord_webhook"> Discord Webhook entfernen</label>{{end}}
+    <label>Webhook URL (JSON POST) {{if .NotifyWebhook}}(gesetzt){{end}}<input name="webhook_url" type="password" autocomplete="off" placeholder="https://example.com/hook"></label>
+    {{if .NotifyWebhook}}<label class="check"><input type="checkbox" name="clear_webhook_url"> Webhook entfernen</label>{{end}}
+    <label>SMTP Server<input name="smtp_host" value="{{.S.Settings.Notify.SMTPHost}}" placeholder="smtp.example.com"></label>
+    <label>SMTP Port (587 STARTTLS, 465 TLS)<input name="smtp_port" type="number" value="{{if .S.Settings.Notify.SMTPPort}}{{.S.Settings.Notify.SMTPPort}}{{end}}" placeholder="587"></label>
+    <label>SMTP Benutzer<input name="smtp_user" value="{{.S.Settings.Notify.SMTPUser}}" autocomplete="off"></label>
+    <label>SMTP Passwort (leer = unverändert)<input name="smtp_password" type="password" autocomplete="off"></label>
+    <label>Absender<input name="mail_from" value="{{.S.Settings.Notify.MailFrom}}" placeholder="router@example.com"></label>
+    <label>Empfänger (kommagetrennt)<input name="mail_to" value="{{.S.Settings.Notify.MailTo}}" placeholder="noc@example.com"></label>
+    <label class="check"><input type="checkbox" name="clear_smtp_password"> SMTP Passwort löschen</label>
+    <label class="check"><input type="checkbox" name="bgp" {{if .S.Settings.Notify.BGP}}checked{{end}}> BGP Sessions</label>
+    <label class="check"><input type="checkbox" name="backends" {{if .S.Settings.Notify.Backends}}checked{{end}}> Backends</label>
+    <label class="check"><input type="checkbox" name="rpki" {{if .S.Settings.Notify.RPKI}}checked{{end}}> RPKI</label>
+    <div class="wide"><button class="primary">Speichern</button></div>
+  </form>
+  <form method="post" action="/settings/notify/test"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Testnachricht senden</button></form>
+</section>
+
+<section class="card">
+  <h2>Prometheus Metrics {{if .S.Settings.MetricsToken}}<span class="badge ok">aktiv</span>{{else}}<span class="badge">aus</span>{{end}}</h2>
+  <p class="muted">Kennzahlen zu BGP Sessions, Präfixen, RPKI, Backends und WireGuard Tunneln unter <code>{{.BaseURL}}/metrics</code>. Prometheus schickt das Token als Bearer Token mit.</p>
+  {{if .S.Settings.MetricsToken}}
+  <label>Metrics Token</label>
+  <div class="copy"><input readonly value="{{.S.Settings.MetricsToken}}" data-select><button type="button" data-copy>Kopieren</button></div>
+  <details><summary>Beispiel für prometheus.yml</summary><pre>scrape_configs:
+  - job_name: bgp-router
+    scheme: {{if hasPrefix .BaseURL "https"}}https{{else}}http{{end}}
+    authorization:
+      credentials: "{{.S.Settings.MetricsToken}}"
+    static_configs:
+      - targets: ["{{trimScheme .BaseURL}}"]</pre></details>
+  {{end}}
+  <div class="actions">
+    <form method="post" action="/settings/metrics"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="generate"><button class="primary">{{if .S.Settings.MetricsToken}}Neues Token erzeugen{{else}}Aktivieren{{end}}</button></form>
+    {{if .S.Settings.MetricsToken}}<form method="post" action="/settings/metrics" data-confirm="Metrics Endpoint deaktivieren?"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="danger">Deaktivieren</button></form>{{end}}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Benutzer</h2>
+  <p class="muted">Admins dürfen alles, Viewer nur lesen. Der Hauptbenutzer ist immer Admin.</p>
+  <table>
+    <thead><tr><th>Name</th><th>Rolle</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>{{.S.Admin.Username}}</td><td>admin (Hauptbenutzer)</td><td></td></tr>
+      {{range .S.Users}}
+      <tr>
+        <td>{{.Username}}</td>
+        <td>
+          <form method="post" action="/settings/users/{{.Username}}/role" class="inline tight">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <select name="role" data-autosubmit>
+              <option value="admin" {{if eq .Role "admin"}}selected{{end}}>admin</option>
+              <option value="viewer" {{if ne .Role "admin"}}selected{{end}}>viewer</option>
+            </select>
+            <noscript><button>Ändern</button></noscript>
+          </form>
+          <span class="role">{{if eq .Role "admin"}}admin{{else}}viewer{{end}}</span>
+        </td>
+        <td class="actions">
+          <form method="post" action="/settings/users/{{.Username}}/password" class="inline tight">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <input type="password" name="password" placeholder="neues Passwort" minlength="8" autocomplete="new-password" required>
+            <button>Setzen</button>
+          </form>
+          <form method="post" action="/settings/users/{{.Username}}/delete" data-confirm="Benutzer {{.Username}} löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <form method="post" action="/settings/users" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Benutzername<input name="username" required></label>
+    <label>Passwort<input type="password" name="password" minlength="8" autocomplete="new-password" required></label>
+    <label>Rolle<select name="role"><option value="viewer">viewer (nur lesen)</option><option value="admin">admin</option></select></label>
+    <div class="wide"><button class="primary">Benutzer anlegen</button></div>
+  </form>
+</section>
+
+{{if not .OIDCUser}}
+<section class="card">
+  <h2>Eigenes Passwort ändern ({{.User}})</h2>
+  <form method="post" action="/settings/password" class="grid-form self">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <label>Aktuelles Passwort<input type="password" name="current" autocomplete="current-password" required></label>
     <label>Neues Passwort<input type="password" name="new" autocomplete="new-password" minlength="8" required></label>
@@ -83,6 +189,7 @@
     <div class="wide"><button class="primary">Ändern</button></div>
   </form>
 </section>
+{{end}}
 {{end}}
 
 {{define "family"}}
@@ -104,6 +211,23 @@
         <td>{{if .Multihop}}{{.Multihop}}{{else}}–{{end}}</td><td class="mono">{{or .SourceAddress "–"}}</td>
         <td>{{if .Password}}gesetzt{{else}}–{{end}}</td>
         <td class="actions"><form method="post" action="/settings/neighbors/{{$.Key}}/{{.ID}}/delete" data-confirm="Neighbor löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form></td>
+      </tr>
+      <tr class="edit-row">
+        <td colspan="7">
+          <details class="edit"><summary>{{.Name}} bearbeiten</summary>
+            <form method="post" action="/settings/neighbors/{{$.Key}}/{{.ID}}" class="grid-form">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <label>Name<input name="name" value="{{.Name}}"></label>
+              <label>Neighbor Adresse<input name="address" value="{{.Address}}" required></label>
+              <label>Remote ASN<input name="remote_asn" value="{{.RemoteASN}}" required></label>
+              <label>Multihop (0 = direkt)<input name="multihop" type="number" min="0" max="255" value="{{.Multihop}}"></label>
+              <label>Quelladresse (optional)<input name="source" value="{{.SourceAddress}}"></label>
+              <label>BGP Passwort (leer = unverändert)<input name="password" type="password" autocomplete="off"></label>
+              {{if .Password}}<label class="check"><input type="checkbox" name="clear_password"> BGP Passwort entfernen</label>{{end}}
+              <div class="wide"><button class="primary">Speichern</button></div>
+            </form>
+          </details>
+        </td>
       </tr>
     {{else}}
       <tr><td colspan="7" class="muted">Keine Neighbors.</td></tr>

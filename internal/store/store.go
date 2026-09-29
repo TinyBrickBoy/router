@@ -18,13 +18,16 @@ import (
 const TargetLocal = "local"
 
 type State struct {
-	Settings     Settings     `json:"settings"`
-	Prefixes     []Prefix     `json:"prefixes"`
-	Assignments  []Assignment `json:"assignments"`
-	Backends     []Backend    `json:"backends"`
-	Admin        Admin        `json:"admin"`
-	WGPrivateKey string       `json:"wg_private_key"`
-	SecretKey    string       `json:"secret_key"`
+	Settings    Settings     `json:"settings"`
+	Prefixes    []Prefix     `json:"prefixes"`
+	Assignments []Assignment `json:"assignments"`
+	Backends    []Backend    `json:"backends"`
+	Admin       Admin        `json:"admin"`
+	Users       []User       `json:"users"`
+	// OIDCEpoch wird beim Abmelden eines OpenID Benutzers erhöht und beendet alle OpenID Sessions.
+	OIDCEpoch    int    `json:"oidc_epoch"`
+	WGPrivateKey string `json:"wg_private_key"`
+	SecretKey    string `json:"secret_key"`
 }
 
 type Settings struct {
@@ -38,6 +41,9 @@ type Settings struct {
 	Update    UpdateSettings `json:"update"`
 	RPKI      RPKISettings   `json:"rpki"`
 	OIDC      OIDCSettings   `json:"oidc"`
+	Notify    NotifySettings `json:"notify"`
+	// MetricsToken schützt /metrics (leer = Endpoint aus).
+	MetricsToken string `json:"metrics_token"`
 }
 
 // OIDCSettings: Login über einen OpenID Connect Provider.
@@ -48,7 +54,24 @@ type OIDCSettings struct {
 	ClientSecret    string `json:"client_secret"`
 	AllowedUsers    string `json:"allowed_users"`  // E-Mail, Benutzername oder sub, kommagetrennt
 	AllowedGroups   string `json:"allowed_groups"` // Werte aus dem groups Claim, kommagetrennt
+	ViewerUsers     string `json:"viewer_users"`   // wie AllowedUsers, aber nur lesend
+	ViewerGroups    string `json:"viewer_groups"`  // wie AllowedGroups, aber nur lesend
 	DisablePassword bool   `json:"disable_password"`
+}
+
+// NotifySettings: Kanäle und Ereignisse für Benachrichtigungen.
+type NotifySettings struct {
+	DiscordWebhook string `json:"discord_webhook"`
+	WebhookURL     string `json:"webhook_url"`
+	SMTPHost       string `json:"smtp_host"`
+	SMTPPort       int    `json:"smtp_port"`
+	SMTPUser       string `json:"smtp_user"`
+	SMTPPassword   string `json:"smtp_password"`
+	MailFrom       string `json:"mail_from"`
+	MailTo         string `json:"mail_to"` // kommagetrennt
+	BGP            bool   `json:"bgp"`
+	Backends       bool   `json:"backends"`
+	RPKI           bool   `json:"rpki"`
 }
 
 // RPKISettings: optionaler RTR Validator. Ist er gesetzt, kündigt BIRD keine
@@ -100,6 +123,9 @@ type Prefix struct {
 	CIDR        string `json:"cidr"`
 	Description string `json:"description"`
 	Announce    bool   `json:"announce"`
+	// Traffic Engineering: AS Path Prepending und BGP Communities beim Export
+	Prepend     int    `json:"prepend,omitempty"`
+	Communities string `json:"communities,omitempty"` // "65000:100, 65000:1:2"
 }
 
 type Assignment struct {
@@ -120,8 +146,19 @@ type Backend struct {
 	UpdateRequested bool   `json:"update_requested"`
 }
 
-type Admin struct {
+// Rollen: Admins dürfen alles, Viewer nur lesen.
+const (
+	RoleAdmin  = "admin"
+	RoleViewer = "viewer"
+)
+
+// Admin ist der Hauptbenutzer. Er ist immer Admin und kann nicht gelöscht werden.
+type Admin = User
+
+// User ist ein lokaler Benutzer mit Passwort.
+type User struct {
 	Username     string `json:"username"`
+	Role         string `json:"role,omitempty"`
 	PasswordHash string `json:"password_hash"`
 	Salt         string `json:"salt"`
 	Iterations   int    `json:"iterations"`
@@ -151,6 +188,7 @@ func Defaults() State {
 				BirdcBinary:    "birdc",
 			},
 			Update: UpdateSettings{GitHubRepo: "tinybrickboy/router"},
+			Notify: NotifySettings{BGP: true, Backends: true, RPKI: true},
 		},
 		SecretKey: RandomHex(32),
 	}
@@ -240,6 +278,33 @@ func (st *State) Backend(id string) *Backend {
 		}
 	}
 	return nil
+}
+
+// User sucht einen lokalen Benutzer (inklusive Hauptbenutzer) per Name.
+func (st *State) User(name string) *User {
+	if name == "" {
+		return nil
+	}
+	if st.Admin.Username == name {
+		return &st.Admin
+	}
+	for i := range st.Users {
+		if st.Users[i].Username == name {
+			return &st.Users[i]
+		}
+	}
+	return nil
+}
+
+// UserRole liefert die Rolle eines lokalen Benutzers.
+func (st *State) UserRole(name string) string {
+	if name == st.Admin.Username {
+		return RoleAdmin
+	}
+	if u := st.User(name); u != nil && u.Role == RoleAdmin {
+		return RoleAdmin
+	}
+	return RoleViewer
 }
 
 // RouterTunnelAddrs liefert die Tunneladressen des Routers (erste Hostadresse) mit Präfixlänge.

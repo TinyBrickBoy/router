@@ -8,7 +8,7 @@
 <script src="/static/app.js" defer></script>
 {{block "head" .}}{{end}}
 </head>
-<body>
+<body{{if and .CSRF (not .IsAdmin)}} class="readonly"{{end}}>
 {{if .CSRF}}
 <header class="top">
   <a class="brand" href="/">BGP Router</a>
@@ -19,9 +19,11 @@
     <a href="/backends" {{if eq .Active "backends"}}class="active"{{end}}>Backends</a>
     <a href="/settings" {{if eq .Active "settings"}}class="active"{{end}}>Einstellungen</a>
     <a href="/updates" {{if eq .Active "updates"}}class="active"{{end}}>Updates</a>
+    <a href="/audit" {{if eq .Active "audit"}}class="active"{{end}}>Protokoll</a>
   </nav>
   <form method="post" action="/logout" class="logout">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <span class="muted">{{.User}}{{if not .IsAdmin}} (nur lesen){{end}}</span>
     <button class="link">Abmelden</button>
   </form>
 </header>

@@ -21,11 +21,20 @@
       <form method="post" action="/backends/{{.ID}}/delete" data-confirm="Backend {{.Name}} löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
     </div>
   </div>
+  <details class="edit"><summary>Umbenennen</summary>
+    <form method="post" action="/backends/{{.ID}}/rename" class="inline tight">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input name="name" value="{{.Name}}" required>
+      <button class="primary">Speichern</button>
+    </form>
+  </details>
   <dl class="grid">
     <dt>Hostname</dt><dd>{{or .Hostname "–"}}</dd>
     <dt>Zuletzt gesehen</dt><dd>{{ago .LastSeen}}{{if .Addr}} von <span class="mono">{{.Addr}}</span>{{end}}</dd>
     <dt>Agent</dt><dd>{{or .Version "–"}}{{if .Arch}} ({{.Arch}}){{end}} {{if .Outdated}}<span class="badge warn">Update verfügbar</span>{{end}}</dd>
     <dt>Tunnel IPs</dt><dd class="mono">{{.TunnelV4}} {{.TunnelV6}}</dd>
+    <dt>WireGuard</dt><dd>{{with .WG}}{{if .TunnelUp}}<span class="badge ok">Tunnel aktiv</span>{{else}}<span class="badge err">kein Handshake</span>{{end}} letzter Handshake {{ago .Handshake}}{{if .Endpoint}} von <span class="mono">{{.Endpoint}}</span>{{end}}{{else}}–{{end}}</dd>
+    {{with .WG}}<dt>Traffic</dt><dd>↓ {{bytes .RX}} empfangen · ↑ {{bytes .TX}} gesendet</dd>{{end}}
     <dt>Public Key</dt><dd class="mono">{{or .PublicKey "–"}}</dd>
   </dl>
   <h3>Zugewiesene IPs / Netze</h3>
@@ -50,8 +59,12 @@
     <button class="primary">IP zuweisen</button>
   </form>
   {{else}}<p class="muted">Zum Zuweisen zuerst unter <a href="/prefixes">Präfixe</a> ein Netz eintragen.</p>{{end}}
+  {{if .SetupCmd}}
   <label>Setup Kommando (enthält das geheime Token)</label>
   <div class="copy"><input readonly value="{{.SetupCmd}}" data-select><button type="button" data-copy>Kopieren</button></div>
+  {{else}}
+  <p class="muted">Der Agent ist online, das Setup Kommando wird deshalb ausgeblendet. Es erscheint wieder, sobald das Backend offline ist.</p>
+  {{end}}
 </section>
 {{else}}
 <section class="card"><p class="muted">Noch keine Backends angelegt.</p></section>

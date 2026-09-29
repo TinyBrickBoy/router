@@ -76,6 +76,7 @@ func (s *Server) agentSync(w http.ResponseWriter, r *http.Request) {
 		}
 		if changedKey {
 			log.Printf("backend %s registriert (%s)", b.Name, req.Hostname)
+			s.audit(AuditEntry{User: "agent:" + b.Name, IP: remoteHost(r), Action: "Backend registriert", Detail: req.Hostname + " " + req.PublicKey})
 			s.Applier.Trigger()
 		}
 		b.UpdateRequested = b.UpdateRequested && !upToDate

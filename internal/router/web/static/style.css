@@ -83,3 +83,15 @@ h3 { font-size: 14px; margin: 16px 0 8px; color: var(--muted); text-transform: u
 a.button { display: block; text-align: center; padding: 9px 14px; border-radius: 6px; text-decoration: none; border: 1px solid var(--border); }
 a.button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
 .or { text-align: center; color: var(--muted); font-size: 13px; margin: 14px 0; }
+/* Viewer: Aktionen ausblenden (der Server lehnt sie ohnehin ab) */
+body.readonly main form[method=post]:not(.self), body.readonly main .copy { display: none; }
+.role { display: none; }
+body.readonly .role { display: inline; }
+.top .logout .muted { margin-right: 8px; font-size: 13px; }
+.nowrap { white-space: nowrap; }
+.small { font-size: 12px; }
+details.edit { display: inline-block; vertical-align: middle; }
+details.edit[open] { display: block; margin: 8px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); text-align: left; }
+details.edit summary { margin-top: 0; }
+tr.edit-row td { border-top: none; padding-top: 0; }
+body.readonly details.edit { display: none; }

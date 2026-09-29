@@ -140,6 +140,7 @@ func run(args []string) {
 			return err
 		}
 		log.Printf("starte neu mit neuem binary (%s)", update.Executable())
+		srv.SaveSeen()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = httpSrv.Shutdown(ctx) // wartet auf laufende Anfragen, neue warten im Kernel Backlog
 		cancel()
@@ -158,6 +159,8 @@ func run(args []string) {
 	}
 
 	go applier.Loop()
+	stop := make(chan struct{})
+	srv.Start(stop)
 
 	if inherited {
 		log.Printf("bgp-router %s nach update gestartet, übernehme %s", version.Version, rawLn.Addr())
@@ -170,6 +173,8 @@ func run(args []string) {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	log.Printf("beende (netzwerkkonfiguration bleibt bestehen)")
+	close(stop)
+	srv.SaveSeen()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
@@ -236,6 +241,7 @@ func initState(st *store.Store, stateDir string) error {
 func passwd(args []string) {
 	fs := flag.NewFlagSet("passwd", flag.ExitOnError)
 	statePath := fs.String("state", "/var/lib/bgp-router/state.json", "zustandsdatei")
+	user := fs.String("user", "", "benutzer (standard: hauptbenutzer)")
 	_ = fs.Parse(args)
 	fmt.Print("neues passwort: ")
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -252,7 +258,13 @@ func passwd(args []string) {
 	}
 	if err := st.Update(func(s *store.State) error {
 		s.Settings.OIDC.DisablePassword = false // Notfallzugang bei OIDC Problemen
-		return router.SetPassword(&s.Admin, pw)
+		u := &s.Admin
+		if *user != "" {
+			if u = s.User(*user); u == nil {
+				return fmt.Errorf("benutzer %s nicht gefunden", *user)
+			}
+		}
+		return router.SetPassword(u, pw)
 	}); err != nil {
 		log.Fatal(err)
 	}

@@ -1,6 +1,6 @@
 {{define "content"}}
 <h1>Präfixe</h1>
-<p class="muted">Netze, die per BGP angekündigt werden. IPv4 Präfixe sollten mindestens /24, IPv6 mindestens /48 groß sein, sonst werden sie von den meisten Upstreams gefiltert. Für jedes Präfix muss ein ROA für deine ASN existieren (RPKI valid), sonst verwerfen viele Netze die Ankündigung.</p>
+<p class="muted">Netze, die per BGP angekündigt werden. Mit <b>Prepend</b> wird die eigene ASN zusätzlich vorangestellt, damit ein Pfad unattraktiver wird. <b>Communities</b> (a:b oder large a:b:c) steuern beim Upstream z.B. Blackholing, Prepending oder Regionen, siehe dessen Dokumentation. IPv4 Präfixe sollten mindestens /24, IPv6 mindestens /48 groß sein, sonst werden sie von den meisten Upstreams gefiltert. Für jedes Präfix muss ein ROA für deine ASN existieren (RPKI valid), sonst verwerfen viele Netze die Ankündigung.</p>
 
 <section class="card">
   <h2>Präfix hinzufügen</h2>
@@ -10,6 +10,12 @@
     <input name="description" placeholder="Beschreibung">
     <label class="check"><input type="checkbox" name="announce" checked> ankündigen</label>
     <button class="primary">Hinzufügen</button>
+    <details class="wide"><summary>Traffic Engineering</summary>
+      <div class="inline">
+        <input name="prepend" type="number" min="0" max="10" placeholder="Prepend (0 bis 10)">
+        <input name="communities" placeholder="Communities, z.B. 64515:100, 4200000000:1:2">
+      </div>
+    </details>
   </form>
 </section>
 
@@ -19,7 +25,7 @@
     {{if .S.Prefixes}}<form method="post" action="/prefixes/rpki"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>RPKI prüfen (AS{{.S.Settings.ASN}})</button></form>{{end}}
   </div>
   <table>
-    <thead><tr><th>Netz</th><th>Familie</th><th>Beschreibung</th><th>Status</th><th>RPKI</th><th></th></tr></thead>
+    <thead><tr><th>Netz</th><th>Familie</th><th>Beschreibung</th><th>Status</th><th>RPKI</th><th>Traffic Engineering</th><th></th></tr></thead>
     <tbody>
     {{range .S.Prefixes}}
       <tr>
@@ -28,13 +34,27 @@
         <td>{{.Description}}</td>
         <td>{{if .Announce}}<span class="badge ok">wird angekündigt</span>{{else}}<span class="badge">pausiert</span>{{end}}</td>
         <td>{{with index $.RPKI .CIDR}}<span class="badge {{if eq .Status "valid"}}ok{{else if eq .Status "unknown"}}warn{{else}}err{{end}}" title="{{range .ROAs}}{{.}}&#10;{{end}}{{.Err}}">{{.Status}}</span>{{else}}<span class="muted">–</span>{{end}}</td>
+        <td class="small">{{if .Prepend}}Prepend {{.Prepend}}×<br>{{end}}{{if .Communities}}<span class="mono">{{.Communities}}</span>{{end}}{{if not (or .Prepend .Communities)}}<span class="muted">–</span>{{end}}</td>
         <td class="actions">
           <form method="post" action="/prefixes/{{.ID}}/toggle"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>{{if .Announce}}Pausieren{{else}}Ankündigen{{end}}</button></form>
           <form method="post" action="/prefixes/{{.ID}}/delete" data-confirm="Präfix {{.CIDR}} löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
         </td>
       </tr>
+      <tr class="edit-row">
+        <td colspan="7">
+          <details class="edit"><summary>{{.CIDR}} bearbeiten</summary>
+            <form method="post" action="/prefixes/{{.ID}}/edit" class="grid-form">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <label>Beschreibung<input name="description" value="{{.Description}}"></label>
+              <label>Prepend (0 bis 10)<input name="prepend" type="number" min="0" max="10" value="{{.Prepend}}"></label>
+              <label class="wide">Communities<input name="communities" value="{{.Communities}}" placeholder="64515:100, 4200000000:1:2"></label>
+              <div class="wide"><button class="primary">Speichern</button></div>
+            </form>
+          </details>
+        </td>
+      </tr>
     {{else}}
-      <tr><td colspan="6" class="muted">Noch keine Präfixe eingetragen.</td></tr>
+      <tr><td colspan="7" class="muted">Noch keine Präfixe eingetragen.</td></tr>
     {{end}}
     </tbody>
   </table>
