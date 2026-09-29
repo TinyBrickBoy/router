@@ -130,6 +130,9 @@ func formSummary(form url.Values) string {
 	var parts []string
 	for _, k := range keys {
 		v := strings.Join(form[k], ",")
+		if v == "" {
+			continue
+		}
 		if len(v) > 100 {
 			v = v[:100] + "…"
 		}

@@ -36,7 +36,13 @@
         <td>{{with index $.RPKI .CIDR}}<span class="badge {{if eq .Status "valid"}}ok{{else if eq .Status "unknown"}}warn{{else}}err{{end}}" title="{{range .ROAs}}{{.}}&#10;{{end}}{{.Err}}">{{.Status}}</span>{{else}}<span class="muted">–</span>{{end}}</td>
         <td class="small">{{if .Prepend}}Prepend {{.Prepend}}×<br>{{end}}{{if .Communities}}<span class="mono">{{.Communities}}</span>{{end}}{{if not (or .Prepend .Communities)}}<span class="muted">–</span>{{end}}</td>
         <td class="actions">
-          <details class="edit"><summary>Bearbeiten</summary>
+          <form method="post" action="/prefixes/{{.ID}}/toggle"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>{{if .Announce}}Pausieren{{else}}Ankündigen{{end}}</button></form>
+          <form method="post" action="/prefixes/{{.ID}}/delete" data-confirm="Präfix {{.CIDR}} löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
+        </td>
+      </tr>
+      <tr class="edit-row">
+        <td colspan="7">
+          <details class="edit"><summary>{{.CIDR}} bearbeiten</summary>
             <form method="post" action="/prefixes/{{.ID}}/edit" class="grid-form">
               <input type="hidden" name="csrf" value="{{$.CSRF}}">
               <label>Beschreibung<input name="description" value="{{.Description}}"></label>
@@ -45,8 +51,6 @@
               <div class="wide"><button class="primary">Speichern</button></div>
             </form>
           </details>
-          <form method="post" action="/prefixes/{{.ID}}/toggle"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>{{if .Announce}}Pausieren{{else}}Ankündigen{{end}}</button></form>
-          <form method="post" action="/prefixes/{{.ID}}/delete" data-confirm="Präfix {{.CIDR}} löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
         </td>
       </tr>
     {{else}}
