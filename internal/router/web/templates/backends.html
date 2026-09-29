@@ -50,8 +50,12 @@
     <button class="primary">IP zuweisen</button>
   </form>
   {{else}}<p class="muted">Zum Zuweisen zuerst unter <a href="/prefixes">Präfixe</a> ein Netz eintragen.</p>{{end}}
+  {{if .SetupCmd}}
   <label>Setup Kommando (enthält das geheime Token)</label>
   <div class="copy"><input readonly value="{{.SetupCmd}}" data-select><button type="button" data-copy>Kopieren</button></div>
+  {{else}}
+  <p class="muted">Der Agent ist online, das Setup Kommando wird deshalb ausgeblendet. Es erscheint wieder, sobald das Backend offline ist.</p>
+  {{end}}
 </section>
 {{else}}
 <section class="card"><p class="muted">Noch keine Backends angelegt.</p></section>

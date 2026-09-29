@@ -588,7 +588,10 @@ func (s *Server) backendsPage(w http.ResponseWriter, r *http.Request) {
 	p.Backends = s.backendViews(p.S)
 	base := s.baseURL(p.S, r)
 	for i := range p.Backends {
-		p.Backends[i].SetupCmd = s.setupCommand(base, p.Backends[i].Token)
+		// Das Kommando enthält das geheime Token: bei laufendem Agent nicht ausliefern
+		if !p.Backends[i].Online {
+			p.Backends[i].SetupCmd = s.setupCommand(base, p.Backends[i].Token)
+		}
 	}
 	s.render(w, "backends", p)
 }
