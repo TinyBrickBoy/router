@@ -123,6 +123,9 @@ type Prefix struct {
 	CIDR        string `json:"cidr"`
 	Description string `json:"description"`
 	Announce    bool   `json:"announce"`
+	// Traffic Engineering: AS Path Prepending und BGP Communities beim Export
+	Prepend     int    `json:"prepend,omitempty"`
+	Communities string `json:"communities,omitempty"` // "65000:100, 65000:1:2"
 }
 
 type Assignment struct {

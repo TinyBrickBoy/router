@@ -90,3 +90,8 @@ body.readonly .role { display: inline; }
 .top .logout .muted { margin-right: 8px; font-size: 13px; }
 .nowrap { white-space: nowrap; }
 .small { font-size: 12px; }
+details.edit { display: inline-block; vertical-align: middle; }
+details.edit[open] { display: block; margin: 8px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); text-align: left; }
+details.edit summary { margin-top: 0; }
+tr.edit-row td { border-top: none; padding-top: 0; }
+body.readonly details.edit { display: none; }

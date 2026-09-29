@@ -21,6 +21,13 @@
       <form method="post" action="/backends/{{.ID}}/delete" data-confirm="Backend {{.Name}} löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
     </div>
   </div>
+  <details class="edit"><summary>Umbenennen</summary>
+    <form method="post" action="/backends/{{.ID}}/rename" class="inline tight">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input name="name" value="{{.Name}}" required>
+      <button class="primary">Speichern</button>
+    </form>
+  </details>
   <dl class="grid">
     <dt>Hostname</dt><dd>{{or .Hostname "–"}}</dd>
     <dt>Zuletzt gesehen</dt><dd>{{ago .LastSeen}}{{if .Addr}} von <span class="mono">{{.Addr}}</span>{{end}}</dd>

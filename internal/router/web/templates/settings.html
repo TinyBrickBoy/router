@@ -212,6 +212,23 @@
         <td>{{if .Password}}gesetzt{{else}}–{{end}}</td>
         <td class="actions"><form method="post" action="/settings/neighbors/{{$.Key}}/{{.ID}}/delete" data-confirm="Neighbor löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form></td>
       </tr>
+      <tr class="edit-row">
+        <td colspan="7">
+          <details class="edit"><summary>{{.Name}} bearbeiten</summary>
+            <form method="post" action="/settings/neighbors/{{$.Key}}/{{.ID}}" class="grid-form">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <label>Name<input name="name" value="{{.Name}}"></label>
+              <label>Neighbor Adresse<input name="address" value="{{.Address}}" required></label>
+              <label>Remote ASN<input name="remote_asn" value="{{.RemoteASN}}" required></label>
+              <label>Multihop (0 = direkt)<input name="multihop" type="number" min="0" max="255" value="{{.Multihop}}"></label>
+              <label>Quelladresse (optional)<input name="source" value="{{.SourceAddress}}"></label>
+              <label>BGP Passwort (leer = unverändert)<input name="password" type="password" autocomplete="off"></label>
+              {{if .Password}}<label class="check"><input type="checkbox" name="clear_password"> BGP Passwort entfernen</label>{{end}}
+              <div class="wide"><button class="primary">Speichern</button></div>
+            </form>
+          </details>
+        </td>
+      </tr>
     {{else}}
       <tr><td colspan="7" class="muted">Keine Neighbors.</td></tr>
     {{end}}

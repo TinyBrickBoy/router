@@ -63,6 +63,31 @@ func GenerateBird(st store.State) (string, error) {
 		}
 		b.WriteString("}\n")
 
+		// Export Filter: nur eigene Ankündigungen, optional RPKI und Traffic Engineering
+		roa := ""
+		if rpki {
+			// eigene Ankündigungen, die laut RPKI invalid wären, zurückhalten
+			roa = fmt.Sprintf("roa_check(rpki%s, net, %d)", fam.name[3:], s.ASN)
+		}
+		te, err := teRules(st.Prefixes, fam.v6, s.ASN)
+		if err != nil {
+			return "", err
+		}
+		export := fmt.Sprintf("where proto = %q", static)
+		if roa != "" {
+			export += " && " + roa + " != ROA_INVALID"
+		}
+		if te != "" {
+			filter := "export" + fam.name[3:]
+			fmt.Fprintf(&b, "\nfilter %s {\n\tif proto != %q then reject;\n", filter, static)
+			if roa != "" {
+				fmt.Fprintf(&b, "\tif %s = ROA_INVALID then reject;\n", roa)
+			}
+			b.WriteString(te)
+			b.WriteString("\taccept;\n}\n")
+			export = "filter " + filter
+		}
+
 		for i, n := range fam.cfg.Neighbors {
 			addr, err := netip.ParseAddr(n.Address)
 			if err != nil {
@@ -88,13 +113,39 @@ func GenerateBird(st store.State) (string, error) {
 			if n.Password != "" {
 				fmt.Fprintf(&b, "\tpassword %s;\n", birdString(n.Password))
 			}
-			export := fmt.Sprintf("proto = %q", static)
-			if rpki {
-				// eigene Ankündigungen, die laut RPKI invalid wären, zurückhalten
-				export += fmt.Sprintf(" && roa_check(rpki%s, net, %d) != ROA_INVALID", fam.name[3:], s.ASN)
-			}
-			fmt.Fprintf(&b, "\t%s {\n\t\timport none;\n\t\texport where %s;\n\t};\n}\n", fam.name, export)
+			fmt.Fprintf(&b, "\t%s {\n\t\timport none;\n\t\texport %s;\n\t};\n}\n", fam.name, export)
 		}
+	}
+	return b.String(), nil
+}
+
+// teRules erzeugt die Filterregeln für Prepend und Communities einer Adressfamilie.
+func teRules(prefixes []store.Prefix, v6 bool, asn uint32) (string, error) {
+	var b strings.Builder
+	for _, p := range prefixes {
+		pfx, err := netip.ParsePrefix(p.CIDR)
+		if err != nil || !p.Announce || pfx.Addr().Is6() != v6 || (p.Prepend == 0 && p.Communities == "") {
+			continue
+		}
+		cs, err := parseCommunities(p.Communities)
+		if err != nil {
+			return "", fmt.Errorf("präfix %s: %w", p.CIDR, err)
+		}
+		if p.Prepend < 0 || p.Prepend > maxPrepend {
+			return "", fmt.Errorf("präfix %s: ungültiges prepend", p.CIDR)
+		}
+		fmt.Fprintf(&b, "\tif net = %s then {\n", pfx.Masked())
+		for i := 0; i < p.Prepend; i++ {
+			fmt.Fprintf(&b, "\t\tbgp_path.prepend(%d);\n", asn)
+		}
+		for _, c := range cs {
+			if c.Large() {
+				fmt.Fprintf(&b, "\t\tbgp_large_community.add((%d,%d,%d));\n", c.Parts[0], c.Parts[1], c.Parts[2])
+			} else {
+				fmt.Fprintf(&b, "\t\tbgp_community.add((%d,%d));\n", c.Parts[0], c.Parts[1])
+			}
+		}
+		b.WriteString("\t}\n")
 	}
 	return b.String(), nil
 }

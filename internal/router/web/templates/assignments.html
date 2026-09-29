@@ -36,6 +36,13 @@
         </td>
         <td>{{.Description}}</td>
         <td class="actions">
+          <details class="edit"><summary>Bearbeiten</summary>
+            <form method="post" action="/assignments/{{.ID}}/edit" class="inline tight">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <input name="description" value="{{.Description}}" placeholder="Beschreibung">
+              <button class="primary">Speichern</button>
+            </form>
+          </details>
           <form method="post" action="/assignments/{{.ID}}/delete" data-confirm="Zuweisung {{.CIDR}} löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form>
         </td>
       </tr>

@@ -96,24 +96,28 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /prefixes", a(s.prefixAdd))
 	mux.HandleFunc("POST /prefixes/{id}/toggle", a(s.prefixToggle))
 	mux.HandleFunc("POST /prefixes/{id}/delete", a(s.prefixDelete))
+	mux.HandleFunc("POST /prefixes/{id}/edit", a(s.prefixEdit))
 	mux.HandleFunc("POST /prefixes/rpki", a(s.rpkiCheckAll))
 
 	mux.HandleFunc("GET /assignments", a(s.assignmentsPage))
 	mux.HandleFunc("POST /assignments", a(s.assignmentAdd))
 	mux.HandleFunc("POST /assignments/{id}/target", a(s.assignmentTarget))
 	mux.HandleFunc("POST /assignments/{id}/delete", a(s.assignmentDelete))
+	mux.HandleFunc("POST /assignments/{id}/edit", a(s.assignmentEdit))
 
 	mux.HandleFunc("GET /backends", a(s.backendsPage))
 	mux.HandleFunc("POST /backends", a(s.backendAdd))
 	mux.HandleFunc("POST /backends/{id}/delete", a(s.backendDelete))
 	mux.HandleFunc("POST /backends/{id}/token", a(s.backendToken))
 	mux.HandleFunc("POST /backends/{id}/update", a(s.backendUpdate))
+	mux.HandleFunc("POST /backends/{id}/rename", a(s.backendRename))
 
 	mux.HandleFunc("GET /settings", a(s.settingsPage))
 	mux.HandleFunc("POST /settings/general", a(s.settingsGeneral))
 	mux.HandleFunc("POST /settings/family/{fam}", a(s.settingsFamily))
 	mux.HandleFunc("POST /settings/neighbors/{fam}", a(s.neighborAdd))
 	mux.HandleFunc("POST /settings/neighbors/{fam}/{id}/delete", a(s.neighborDelete))
+	mux.HandleFunc("POST /settings/neighbors/{fam}/{id}", a(s.neighborEdit))
 	mux.HandleFunc("POST /settings/wireguard", a(s.settingsWireGuard))
 	mux.HandleFunc("POST /settings/system", a(s.settingsSystem))
 	mux.HandleFunc("POST /settings/rpki", a(s.settingsRPKI))
@@ -437,10 +441,14 @@ func (s *Server) prefixAdd(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("%s überschneidet sich mit %s", p, op)
 			}
 		}
-		st.Prefixes = append(st.Prefixes, store.Prefix{
+		np := store.Prefix{
 			ID: store.NewID(), CIDR: p.String(), Description: desc,
 			Announce: r.FormValue("announce") != "",
-		})
+		}
+		if err := parseTE(r, &np, st.Settings.ASN); err != nil {
+			return err
+		}
+		st.Prefixes = append(st.Prefixes, np)
 		sort.Slice(st.Prefixes, func(i, j int) bool { return st.Prefixes[i].CIDR < st.Prefixes[j].CIDR })
 		return nil
 	})
@@ -827,51 +835,154 @@ func (s *Server) settingsFamily(w http.ResponseWriter, r *http.Request) {
 	s.done(w, r, "/settings", err, "Gespeichert")
 }
 
+// parseNeighbor liest einen Neighbor aus dem Formular. Beim Bearbeiten (old != nil)
+// bleibt ein leeres Passwortfeld unverändert.
+func parseNeighbor(r *http.Request, v6 bool, old *store.Neighbor) (store.Neighbor, error) {
+	var n store.Neighbor
+	if old != nil {
+		n = *old
+	}
+	addr, err := netip.ParseAddr(strings.TrimSpace(r.FormValue("address")))
+	if err != nil || addr.Is6() != v6 {
+		return n, fmt.Errorf("neighbor adresse passt nicht zur adressfamilie")
+	}
+	asn, err := parseASN(r.FormValue("remote_asn"))
+	if err != nil {
+		return n, err
+	}
+	name, err := cleanText("name", r.FormValue("name"), 64)
+	if err != nil {
+		return n, err
+	}
+	pw, err := cleanText("bgp passwort", r.FormValue("password"), 80)
+	if err != nil {
+		return n, err
+	}
+	n.Name, n.Address, n.RemoteASN = name, addr.String(), asn
+	if pw != "" || old == nil {
+		n.Password = pw
+	}
+	if r.FormValue("clear_password") != "" {
+		n.Password = ""
+	}
+	if n.Name == "" {
+		n.Name = "upstream"
+	}
+	n.Multihop = 0
+	if v := strings.TrimSpace(r.FormValue("multihop")); v != "" {
+		if n.Multihop, err = atoi(v); err != nil || n.Multihop < 0 || n.Multihop > 255 {
+			return n, fmt.Errorf("multihop muss zwischen 0 und 255 liegen")
+		}
+	}
+	n.SourceAddress = ""
+	if v := strings.TrimSpace(r.FormValue("source")); v != "" {
+		src, err := netip.ParseAddr(v)
+		if err != nil || src.Is6() != v6 {
+			return n, fmt.Errorf("quelladresse passt nicht zur adressfamilie")
+		}
+		n.SourceAddress = src.String()
+	}
+	return n, nil
+}
+
 func (s *Server) neighborAdd(w http.ResponseWriter, r *http.Request) {
 	err := s.Store.Update(func(st *store.State) error {
 		f, v6, err := family(st, r.PathValue("fam"))
 		if err != nil {
 			return err
 		}
-		addr, err := netip.ParseAddr(strings.TrimSpace(r.FormValue("address")))
-		if err != nil || addr.Is6() != v6 {
-			return fmt.Errorf("neighbor adresse passt nicht zur adressfamilie")
-		}
-		asn, err := parseASN(r.FormValue("remote_asn"))
+		n, err := parseNeighbor(r, v6, nil)
 		if err != nil {
 			return err
 		}
-		name, err := cleanText("name", r.FormValue("name"), 64)
-		if err != nil {
-			return err
-		}
-		pw, err := cleanText("bgp passwort", r.FormValue("password"), 80)
-		if err != nil {
-			return err
-		}
-		n := store.Neighbor{
-			ID: store.NewID(), Name: name, Address: addr.String(),
-			RemoteASN: asn, Password: pw,
-		}
-		if n.Name == "" {
-			n.Name = "upstream"
-		}
-		if v := strings.TrimSpace(r.FormValue("multihop")); v != "" {
-			if n.Multihop, err = atoi(v); err != nil || n.Multihop < 0 || n.Multihop > 255 {
-				return fmt.Errorf("multihop muss zwischen 0 und 255 liegen")
-			}
-		}
-		if v := strings.TrimSpace(r.FormValue("source")); v != "" {
-			src, err := netip.ParseAddr(v)
-			if err != nil || src.Is6() != v6 {
-				return fmt.Errorf("quelladresse passt nicht zur adressfamilie")
-			}
-			n.SourceAddress = src.String()
-		}
+		n.ID = store.NewID()
 		f.Neighbors = append(f.Neighbors, n)
 		return nil
 	})
 	s.done(w, r, "/settings", err, "Neighbor "+strings.TrimSpace(r.FormValue("address"))+" hinzugefügt")
+}
+
+func (s *Server) neighborEdit(w http.ResponseWriter, r *http.Request) {
+	err := s.Store.Update(func(st *store.State) error {
+		f, v6, err := family(st, r.PathValue("fam"))
+		if err != nil {
+			return err
+		}
+		for i := range f.Neighbors {
+			if f.Neighbors[i].ID == r.PathValue("id") {
+				n, err := parseNeighbor(r, v6, &f.Neighbors[i])
+				if err != nil {
+					return err
+				}
+				f.Neighbors[i] = n
+				return nil
+			}
+		}
+		return fmt.Errorf("neighbor nicht gefunden")
+	})
+	s.done(w, r, "/settings", err, "Neighbor "+strings.TrimSpace(r.FormValue("address"))+" gespeichert")
+}
+
+func (s *Server) prefixEdit(w http.ResponseWriter, r *http.Request) {
+	cidr := ""
+	err := s.Store.Update(func(st *store.State) error {
+		for i := range st.Prefixes {
+			p := &st.Prefixes[i]
+			if p.ID != r.PathValue("id") {
+				continue
+			}
+			desc, err := cleanText("beschreibung", r.FormValue("description"), 200)
+			if err != nil {
+				return err
+			}
+			if err := parseTE(r, p, st.Settings.ASN); err != nil {
+				return err
+			}
+			p.Description, cidr = desc, p.CIDR
+			return nil
+		}
+		return fmt.Errorf("präfix nicht gefunden")
+	})
+	s.done(w, r, "/prefixes", err, "Präfix "+cidr+" gespeichert")
+}
+
+func (s *Server) assignmentEdit(w http.ResponseWriter, r *http.Request) {
+	cidr := ""
+	err := s.Store.Update(func(st *store.State) error {
+		for i := range st.Assignments {
+			if st.Assignments[i].ID == r.PathValue("id") {
+				desc, err := cleanText("beschreibung", r.FormValue("description"), 200)
+				if err != nil {
+					return err
+				}
+				st.Assignments[i].Description, cidr = desc, st.Assignments[i].CIDR
+				return nil
+			}
+		}
+		return fmt.Errorf("zuweisung nicht gefunden")
+	})
+	s.done(w, r, backTo(r, "/assignments"), err, "Zuweisung "+cidr+" gespeichert")
+}
+
+func (s *Server) backendRename(w http.ResponseWriter, r *http.Request) {
+	name := ""
+	err := s.Store.Update(func(st *store.State) error {
+		b := st.Backend(r.PathValue("id"))
+		if b == nil {
+			return fmt.Errorf("backend nicht gefunden")
+		}
+		n, err := cleanText("name", r.FormValue("name"), 64)
+		if err != nil {
+			return err
+		}
+		if n == "" {
+			return fmt.Errorf("name fehlt")
+		}
+		name = b.Name + " → " + n
+		b.Name = n
+		return nil
+	})
+	s.done(w, r, "/backends", err, "Backend umbenannt: "+name)
 }
 
 func (s *Server) neighborDelete(w http.ResponseWriter, r *http.Request) {
