@@ -128,6 +128,7 @@ func (a *Applier) apply(st store.State) (string, error) {
 	wg := s.WireGuard
 	if st.WGPrivateKey != "" && wg.Interface != "" {
 		cfg := netcfg.WGConfig{PrivateKey: st.WGPrivateKey, ListenPort: wg.ListenPort}
+		var forwarded []netip.Prefix
 		for _, b := range st.Backends {
 			if !wgkey.Valid(b.PublicKey) {
 				continue
@@ -148,6 +149,7 @@ func (a *Applier) apply(st store.State) (string, error) {
 				}
 				allowed = append(allowed, p.Masked().String())
 				routes = append(routes, netcfg.Route{Dst: p, Dev: wg.Interface})
+				forwarded = append(forwarded, p)
 			}
 			cfg.Peers = append(cfg.Peers, netcfg.WGPeer{PublicKey: b.PublicKey, AllowedIPs: allowed})
 		}
@@ -156,6 +158,12 @@ func (a *Applier) apply(st store.State) (string, error) {
 		} else {
 			add("wireguard", m.SyncWireGuard(wg.Interface, filepath.Join(a.StateDir, wg.Interface+".conf"), cfg))
 			add("wireguard adressen", m.SyncAddresses(wg.Interface, st.RouterTunnelAddrs()))
+		}
+		if s.IPv4.Enabled {
+			add("forward freigabe", m.SyncForward("iptables", wg.Interface, forwarded))
+		}
+		if s.IPv6.Enabled {
+			add("forward freigabe", m.SyncForward("ip6tables", wg.Interface, forwarded))
 		}
 	}
 

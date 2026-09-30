@@ -34,6 +34,34 @@ func TestWGRender(t *testing.T) {
 	}
 }
 
+func TestSyncForwardDryRun(t *testing.T) {
+	var buf bytes.Buffer
+	m := &Manager{R: &sysexec.Runner{DryRun: true, Logger: log.New(&buf, "", 0)}}
+	nets := []netip.Prefix{
+		netip.MustParsePrefix("203.0.113.67/32"),
+		netip.MustParsePrefix("2001:db8::/64"),
+	}
+	if err := m.SyncForward("iptables", "wg-bgp", nets); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"iptables -w -A BGP-ROUTER-FWD -d 203.0.113.67/32 -o wg-bgp -j ACCEPT",
+		"iptables -w -A BGP-ROUTER-FWD -s 203.0.113.67/32 -i wg-bgp -j ACCEPT",
+		"iptables -w -I FORWARD 1 -j BGP-ROUTER-FWD",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("fehlt %q in\n%s", want, out)
+		}
+	}
+	// kein pauschales Accept für den Tunnel und keine fremde Adressfamilie
+	for _, bad := range []string{"BGP-ROUTER-FWD -i wg-bgp", "BGP-ROUTER-FWD -o wg-bgp", "2001:db8"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("unerwartet %q in\n%s", bad, out)
+		}
+	}
+}
+
 func TestSyncDryRun(t *testing.T) {
 	var buf bytes.Buffer
 	m := &Manager{R: &sysexec.Runner{DryRun: true, Logger: log.New(&buf, "", 0)}}
