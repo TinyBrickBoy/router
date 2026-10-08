@@ -3,6 +3,7 @@ package router
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -19,6 +20,19 @@ import (
 	"github.com/tinybrickboy/router/internal/store"
 	"github.com/tinybrickboy/router/internal/wgkey"
 )
+
+var errKeyInUse = errors.New("public key wird bereits von einem anderen backend verwendet")
+
+// keyInUse meldet, ob ein anderes Backend schon key verwendet. Sonst landen die
+// Netze beider Backends beim selben WireGuard Peer.
+func keyInUse(st *store.State, id, key string) bool {
+	for _, o := range st.Backends {
+		if o.ID != id && o.PublicKey == key {
+			return true
+		}
+	}
+	return false
+}
 
 func bearer(r *http.Request) string {
 	return strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
@@ -63,6 +77,9 @@ func (s *Server) agentSync(w http.ResponseWriter, r *http.Request) {
 	if b.PublicKey != req.PublicKey || b.Hostname != req.Hostname || (b.UpdateRequested && upToDate) {
 		changedKey := b.PublicKey != req.PublicKey
 		err := s.Store.Update(func(st *store.State) error {
+			if keyInUse(st, b.ID, req.PublicKey) {
+				return errKeyInUse
+			}
 			if sb := st.Backend(b.ID); sb != nil {
 				sb.PublicKey, sb.Hostname = req.PublicKey, req.Hostname
 				if upToDate {
@@ -71,6 +88,10 @@ func (s *Server) agentSync(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		})
+		if errors.Is(err, errKeyInUse) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		if err != nil {
 			log.Printf("backend %s speichern: %v", b.Name, err)
 		}

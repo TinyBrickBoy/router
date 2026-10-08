@@ -2,6 +2,7 @@
 package router
 
 import (
+	"crypto/hmac"
 	"embed"
 	"fmt"
 	"html/template"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -250,9 +252,10 @@ type page struct {
 func (s *Server) newPage(r *http.Request, title, active string) *page {
 	st := s.Store.Get()
 	sess := currentSession(r)
+	msg, errText := flash(st, r)
 	return &page{
 		Title: title, Active: active, CSRF: csrfToken(st, r),
-		Msg: r.URL.Query().Get("msg"), Err: r.URL.Query().Get("err"),
+		Msg: msg, Err: errText,
 		S: st, Version: version.Version, DryRun: s.Runner.DryRun,
 		User: sess.User, IsAdmin: sess.Admin(), OIDCUser: sess.OIDC,
 	}
@@ -265,6 +268,8 @@ func (s *Server) render(w http.ResponseWriter, name string, p *page) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Seiten enthalten Setup Kommandos und Tokens: nicht im Browser Cache ablegen
+	w.Header().Set("Cache-Control", "no-store")
 	if err := t.ExecuteTemplate(w, "layout", p); err != nil {
 		log.Printf("template %s: %v", name, err)
 	}
@@ -282,16 +287,46 @@ func (s *Server) done(w http.ResponseWriter, r *http.Request, back string, err e
 		s.Applier.Trigger()
 	}
 	if len(q) > 0 {
-		back += "?" + q.Encode()
+		back += "?" + s.flashQuery(q)
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// Meldungen nach einer Weiterleitung stehen in der URL (msg bzw. err) und sind
+// signiert. Sonst könnte ein präparierter Link beliebigen Text als Meldung des
+// Routers anzeigen, z.B. eine Aufforderung, das Passwort irgendwo einzugeben.
+func flashSig(st store.State, msg, errText string) string {
+	return mac(st.SecretKey, "flash", strconv.Itoa(len(msg)), msg, errText)[:32]
+}
+
+// flashQuery signiert msg und err in q und liefert die kodierte Query.
+func (s *Server) flashQuery(q url.Values) string {
+	q.Set("sig", flashSig(s.Store.Get(), q.Get("msg"), q.Get("err")))
+	return q.Encode()
+}
+
+// redirectFlash leitet nach path weiter und zeigt dort eine Meldung (kind "msg") oder einen Fehler (kind "err").
+func (s *Server) redirectFlash(w http.ResponseWriter, r *http.Request, path, kind, text string) {
+	http.Redirect(w, r, path+"?"+s.flashQuery(url.Values{kind: {text}}), http.StatusSeeOther)
+}
+
+// flash liefert Meldung und Fehler aus der URL, aber nur mit gültiger Signatur.
+func flash(st store.State, r *http.Request) (msg, errText string) {
+	q := r.URL.Query()
+	msg, errText = q.Get("msg"), q.Get("err")
+	if !hmac.Equal([]byte(q.Get("sig")), []byte(flashSig(st, msg, errText))) {
+		return "", ""
+	}
+	return msg, errText
 }
 
 // ---------- Login ----------
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	o := s.Store.Get().Settings.OIDC
-	p := &page{Title: "Anmelden", Err: r.URL.Query().Get("err"), Msg: r.URL.Query().Get("msg"), Version: version.Version,
+	st := s.Store.Get()
+	o := st.Settings.OIDC
+	msg, errText := flash(st, r)
+	p := &page{Title: "Anmelden", Err: errText, Msg: msg, Version: version.Version,
 		OIDC: o.Enabled, PWLogin: !(o.Enabled && o.DisablePassword)}
 	s.render(w, "login", p)
 }
@@ -306,15 +341,17 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if s.logins.Blocked(ip) {
 		log.Printf("login von %s gesperrt (zu viele fehlversuche)", ip)
-		http.Redirect(w, r, "/login?err="+url.QueryEscape("Zu viele fehlgeschlagene Anmeldungen, bitte in 15 Minuten erneut versuchen"), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/login", "err", "Zu viele fehlgeschlagene Anmeldungen, bitte in 15 Minuten erneut versuchen")
 		return
 	}
 	user := r.FormValue("username")
-	u := st.User(user)
-	if u == nil {
-		u = &store.User{} // unbekannter Benutzer: checkPassword schlägt fehl
+	u, ok := st.User(user), false
+	if u != nil {
+		ok = checkPassword(*u, r.FormValue("password"))
+	} else {
+		checkPassword(dummyUser(), r.FormValue("password")) // gleiche Laufzeit wie bei bekannten Benutzern
 	}
-	if checkPassword(*u, r.FormValue("password")) {
+	if ok {
 		s.logins.Reset(ip)
 		s.audit(AuditEntry{User: u.Username, IP: ip, Action: "Anmeldung"})
 		s.setSessionCookie(w, r, newSession(st, session{User: u.Username}), int(sessionTTL.Seconds()))
@@ -326,7 +363,7 @@ func (s *Server) loginPost(w http.ResponseWriter, r *http.Request) {
 	name, _ := cleanText("", user, 64)
 	s.audit(AuditEntry{User: name, IP: ip, Action: "Anmeldung fehlgeschlagen", Failed: true})
 	time.Sleep(time.Second)
-	http.Redirect(w, r, "/login?err="+url.QueryEscape("Benutzername oder Passwort falsch"), http.StatusSeeOther)
+	s.redirectFlash(w, r, "/login", "err", "Benutzername oder Passwort falsch")
 }
 
 func constEq(a, b string) bool { return len(a) == len(b) && mac("x", a) == mac("x", b) }
@@ -355,7 +392,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	p := s.newPage(r, "Übersicht", "dash")
 	last, err, bird := s.Applier.Status()
-	p.LastApply, p.BirdConf = last, bird
+	p.LastApply, p.BirdConf = last, redactBird(bird)
 	if err != nil {
 		p.ApplyErr = err.Error()
 	}
@@ -383,10 +420,10 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) applyNow(w http.ResponseWriter, r *http.Request) {
 	err := s.Applier.Apply()
 	if err != nil {
-		http.Redirect(w, r, "/?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/", "err", err.Error())
 		return
 	}
-	http.Redirect(w, r, "/?msg="+url.QueryEscape("Konfiguration angewendet"), http.StatusSeeOther)
+	s.redirectFlash(w, r, "/", "msg", "Konfiguration angewendet")
 }
 
 // ---------- Präfixe ----------

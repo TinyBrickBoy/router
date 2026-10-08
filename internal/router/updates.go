@@ -134,12 +134,12 @@ func (s *Server) restartLater() {
 
 func (s *Server) finishUpdate(w http.ResponseWriter, r *http.Request, stored []string, err error) {
 	if err != nil {
-		http.Redirect(w, r, "/updates?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/updates", "err", err.Error())
 		return
 	}
 	restart, err := s.installSelf()
 	if err != nil {
-		http.Redirect(w, r, "/updates?err="+url.QueryEscape("router update: "+err.Error()), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/updates", "err", "router update: "+err.Error())
 		return
 	}
 	msg := "Keine neuen Dateien"
@@ -152,12 +152,12 @@ func (s *Server) finishUpdate(w http.ResponseWriter, r *http.Request, stored []s
 		q.Set("restart", "1")
 		s.restartLater()
 	}
-	http.Redirect(w, r, "/updates?"+q.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, "/updates?"+s.flashQuery(q), http.StatusSeeOther)
 }
 
 func (s *Server) updateUpload(w http.ResponseWriter, r *http.Request) {
 	if !s.updateMu.TryLock() {
-		http.Redirect(w, r, "/updates?err="+url.QueryEscape("ein update läuft bereits"), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/updates", "err", "ein update läuft bereits")
 		return
 	}
 	defer s.updateMu.Unlock()
@@ -215,7 +215,7 @@ func (s *Server) storeDist(name string, src interface{ Read([]byte) (int, error)
 
 func (s *Server) updateGitHub(w http.ResponseWriter, r *http.Request) {
 	if !s.updateMu.TryLock() {
-		http.Redirect(w, r, "/updates?err="+url.QueryEscape("ein update läuft bereits"), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/updates", "err", "ein update läuft bereits")
 		return
 	}
 	defer s.updateMu.Unlock()
@@ -272,7 +272,7 @@ func (s *Server) updateGitHub(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
 	bak := update.Executable() + ".bak"
 	if _, err := os.Stat(bak); err != nil {
-		http.Redirect(w, r, "/updates?err="+url.QueryEscape("kein backup vorhanden"), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/updates", "err", "kein backup vorhanden")
 		return
 	}
 	tmp := bak + ".restore"
@@ -285,11 +285,11 @@ func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
 		os.Remove(tmp)
 	}
 	if err != nil {
-		http.Redirect(w, r, "/updates?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/updates", "err", err.Error())
 		return
 	}
 	s.restartLater()
-	http.Redirect(w, r, "/updates?restart=1&msg="+url.QueryEscape("Vorherige Version wird gestartet …"), http.StatusSeeOther)
+	http.Redirect(w, r, "/updates?"+s.flashQuery(url.Values{"restart": {"1"}, "msg": {"Vorherige Version wird gestartet …"}}), http.StatusSeeOther)
 }
 
 func (s *Server) updateAllAgents(w http.ResponseWriter, r *http.Request) {

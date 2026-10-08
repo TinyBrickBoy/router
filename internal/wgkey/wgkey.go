@@ -31,8 +31,14 @@ func Public(priv string) (string, error) {
 	return base64.StdEncoding.EncodeToString(k.PublicKey().Bytes()), nil
 }
 
-// Valid prüft ob s ein gültiger base64 Schlüssel mit 32 Byte ist.
+// Valid prüft ob s ein gültiger Schlüssel in der kanonischen Form von `wg pubkey`
+// ist: genau 44 Zeichen base64 mit 32 Byte. Der Decoder überspringt Zeilenumbrüche,
+// die dann in die WireGuard Konfiguration durchschlagen würden, deshalb ist die
+// Länge fest und Leerzeichen sind nicht erlaubt.
 func Valid(s string) bool {
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
+	if len(s) != 44 || strings.ContainsAny(s, " \t\r\n") {
+		return false
+	}
+	raw, err := base64.StdEncoding.Strict().DecodeString(s)
 	return err == nil && len(raw) == 32
 }

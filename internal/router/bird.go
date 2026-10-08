@@ -16,6 +16,14 @@ func birdString(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
+var birdPassword = regexp.MustCompile(`(?m)^(\tpassword )"(?:[^"\\]|\\.)*";`)
+
+// redactBird ersetzt die BGP Passwörter, bevor die Konfiguration im Webinterface
+// angezeigt wird. Dort sind Geheimnisse sonst auch für Viewer nie sichtbar.
+func redactBird(conf string) string {
+	return birdPassword.ReplaceAllString(conf, `${1}"***";`)
+}
+
 // GenerateBird erzeugt eine vollständige BIRD2 Konfiguration aus dem Zustand.
 func GenerateBird(st store.State) (string, error) {
 	s := st.Settings
