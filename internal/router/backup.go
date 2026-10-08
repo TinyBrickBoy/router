@@ -13,7 +13,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -203,5 +202,5 @@ func (s *Server) backupRestore(w http.ResponseWriter, r *http.Request) {
 		s.restartLater()
 	}
 	// Der geheime Schlüssel kommt aus dem Backup: die aktuelle Session ist damit ungültig
-	http.Redirect(w, r, "/login?msg="+url.QueryEscape(msg), http.StatusSeeOther)
+	s.redirectFlash(w, r, "/login", "msg", msg)
 }

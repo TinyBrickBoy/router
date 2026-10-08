@@ -41,6 +41,9 @@ func TestGenerateBird(t *testing.T) {
 	if strings.Contains(conf, "192.0.2.0/24") {
 		t.Error("pausiertes präfix wird angekündigt")
 	}
+	if shown := redactBird(conf); strings.Contains(shown, `pa\"ss`) || !strings.Contains(shown, "\tpassword \"***\";\n") {
+		t.Errorf("bgp passwort in der anzeige nicht geschwärzt:\n%s", shown)
+	}
 
 	st.Settings.RPKI.RTRHost = "127.0.0.1"
 	st.Settings.RPKI.RTRPort = 3323

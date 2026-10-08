@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,8 +51,20 @@ func (c *oidcClient) discover(ctx context.Context, issuer string) (*oidcDiscover
 	if c.disc != nil && c.issuer == issuer && time.Since(c.fetched) < time.Hour {
 		return c.disc, nil
 	}
+	if err := validIssuerURL(issuer); err != nil {
+		return nil, fmt.Errorf("discovery: %w", err)
+	}
 	if c.http == nil {
-		c.http = &http.Client{Timeout: 15 * time.Second}
+		c.http = &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// keine Weiterleitung auf http: Client Secret und ID Token liefen sonst im Klartext
+			if !secureURL(req.URL.String()) {
+				return fmt.Errorf("unsichere weiterleitung nach %s", req.URL.Redacted())
+			}
+			if len(via) >= 10 {
+				return errors.New("zu viele weiterleitungen")
+			}
+			return nil
+		}}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(issuer, "/")+"/.well-known/openid-configuration", nil)
 	if err != nil {
@@ -72,27 +85,37 @@ func (c *oidcClient) discover(ctx context.Context, issuer string) (*oidcDiscover
 	if strings.TrimRight(d.Issuer, "/") != strings.TrimRight(issuer, "/") {
 		return nil, fmt.Errorf("discovery: issuer %q passt nicht zu %q", d.Issuer, issuer)
 	}
-	if d.AuthorizationEndpoint == "" || d.TokenEndpoint == "" {
-		return nil, errors.New("discovery: endpunkte fehlen")
+	// Das ID Token wird nicht per Signatur geprüft, sondern vertraut auf TLS zum
+	// Token Endpoint (OIDC Core 3.1.3.7). Über http könnte es jeder im Netz fälschen.
+	if !secureURL(d.AuthorizationEndpoint) || !secureURL(d.TokenEndpoint) {
+		return nil, errors.New("discovery: endpunkte fehlen oder verwenden kein https")
 	}
 	c.issuer, c.disc, c.fetched = issuer, &d, time.Now()
 	return &d, nil
 }
 
-// validIssuerURL erlaubt nur https (http nur für localhost zum Testen).
-func validIssuerURL(v string) error {
+// secureURL erlaubt nur https (http nur für localhost zum Testen).
+func secureURL(v string) bool {
 	u, err := url.Parse(v)
 	if err != nil || u.Host == "" {
-		return errors.New("issuer url ungültig")
+		return false
 	}
 	if u.Scheme == "https" {
-		return nil
+		return true
 	}
 	h := u.Hostname()
-	if ip := net.ParseIP(h); u.Scheme == "http" && (h == "localhost" || (ip != nil && ip.IsLoopback())) {
-		return nil
+	ip := net.ParseIP(h)
+	return u.Scheme == "http" && (h == "localhost" || (ip != nil && ip.IsLoopback()))
+}
+
+func validIssuerURL(v string) error {
+	if u, err := url.Parse(v); err != nil || u.Host == "" {
+		return errors.New("issuer url ungültig")
 	}
-	return errors.New("issuer muss https verwenden")
+	if !secureURL(v) {
+		return errors.New("issuer muss https verwenden")
+	}
+	return nil
 }
 
 func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
@@ -111,7 +134,7 @@ func (s *Server) oidcLogin(w http.ResponseWriter, r *http.Request) {
 	d, err := s.oidc.discover(r.Context(), o.Issuer)
 	if err != nil {
 		log.Printf("oidc: %v", err)
-		http.Redirect(w, r, "/login?err="+url.QueryEscape("OpenID Provider nicht erreichbar: "+err.Error()), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/login", "err", "OpenID Provider nicht erreichbar: "+err.Error())
 		return
 	}
 	state, nonce, verifier := store.RandomHex(16), store.RandomHex(16), store.RandomHex(32)
@@ -171,7 +194,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Printf("oidc login fehlgeschlagen: %s", msg)
 		}
-		http.Redirect(w, r, "/login?err="+url.QueryEscape(msg), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/login", "err", msg)
 	}
 	if s.logins.Blocked(clientIP(r)) {
 		http.Error(w, "zu viele fehlgeschlagene anmeldungen, bitte später erneut versuchen", http.StatusTooManyRequests)
@@ -184,7 +207,12 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
-		fail("Provider meldet: "+e+" "+r.URL.Query().Get("error_description"), nil)
+		// Nur den Fehlercode anzeigen: den Text kann jeder per präpariertem Link setzen
+		desc := fmt.Errorf("%q %q", e, r.URL.Query().Get("error_description"))
+		if !oauthErrorCode.MatchString(e) {
+			e = "unbekannter fehler"
+		}
+		fail("Provider meldet: "+e, desc)
 		return
 	}
 	c, err := r.Cookie(oidcCookie)
@@ -235,6 +263,8 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = redirectPage.Execute(w, "/")
 }
+
+var oauthErrorCode = regexp.MustCompile(`^[a-z_]{1,64}$`)
 
 var redirectPage = template.Must(template.New("r").Parse(`<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url={{.}}"><title>Anmeldung…</title><a href="{{.}}">Weiter</a>`))
 
@@ -333,7 +363,9 @@ func splitList(v string) []string {
 func oidcAllowed(c idClaims, o store.OIDCSettings) (string, string, bool) {
 	user := c.PreferredUsername
 	email := ""
-	if c.Email != "" && (c.EmailVerified == nil || *c.EmailVerified) {
+	// Nur eine ausdrücklich verifizierte E-Mail zählt. Manche Provider senden
+	// email_verified gar nicht und lassen Benutzer ihre E-Mail frei setzen.
+	if c.Email != "" && c.EmailVerified != nil && *c.EmailVerified {
 		email = c.Email
 		if user == "" {
 			user = email
@@ -366,37 +398,61 @@ func oidcAllowed(c idClaims, o store.OIDCSettings) (string, string, bool) {
 	return user, "", false
 }
 
+// oidcAccess fasst alles zusammen, was über den Zugang per OpenID entscheidet.
+func oidcAccess(o store.OIDCSettings) string {
+	data, _ := json.Marshal([]any{o.Enabled, o.Issuer, o.ClientID, o.AllowedUsers, o.AllowedGroups, o.ViewerUsers, o.ViewerGroups})
+	return string(data)
+}
+
 func (s *Server) settingsOIDC(w http.ResponseWriter, r *http.Request) {
+	changed := false
 	err := s.Store.Update(func(st *store.State) error {
-		o := &st.Settings.OIDC
-		o.Enabled = r.FormValue("enabled") != ""
-		o.Issuer = strings.TrimRight(strings.TrimSpace(r.FormValue("issuer")), "/")
-		o.ClientID = strings.TrimSpace(r.FormValue("client_id"))
-		if v := r.FormValue("client_secret"); v != "" {
-			o.ClientSecret = v
-		}
-		if r.FormValue("clear_secret") != "" {
-			o.ClientSecret = ""
-		}
-		o.AllowedUsers = strings.Join(splitList(r.FormValue("allowed_users")), ", ")
-		o.AllowedGroups = strings.Join(splitList(r.FormValue("allowed_groups")), ", ")
-		o.ViewerUsers = strings.Join(splitList(r.FormValue("viewer_users")), ", ")
-		o.ViewerGroups = strings.Join(splitList(r.FormValue("viewer_groups")), ", ")
-		o.DisablePassword = r.FormValue("disable_password") != ""
-		if !o.Enabled {
-			o.DisablePassword = false
-			return nil
-		}
-		if err := validIssuerURL(o.Issuer); err != nil {
+		before := oidcAccess(st.Settings.OIDC)
+		if err := parseOIDC(r, &st.Settings.OIDC); err != nil {
 			return err
 		}
-		if o.ClientID == "" {
-			return errors.New("client id fehlt")
-		}
-		if o.AllowedUsers == "" && o.AllowedGroups == "" {
-			return errors.New("mindestens einen erlaubten benutzer oder eine gruppe eintragen")
+		// Ändert sich der Zugang, enden alle OpenID Sessions. Sonst bliebe ein
+		// entfernter Benutzer bis zu 12 Stunden angemeldet, mit seiner alten Rolle.
+		if changed = oidcAccess(st.Settings.OIDC) != before; changed {
+			st.OIDCEpoch++
 		}
 		return nil
 	})
+	if err == nil && changed && currentSession(r).OIDC {
+		s.redirectFlash(w, r, "/login", "msg", "OpenID Connect Einstellungen gespeichert, bitte neu anmelden")
+		return
+	}
 	s.done(w, r, "/settings", err, "OpenID Connect Einstellungen gespeichert")
+}
+
+// parseOIDC übernimmt die OpenID Einstellungen aus dem Formular.
+func parseOIDC(r *http.Request, o *store.OIDCSettings) error {
+	o.Enabled = r.FormValue("enabled") != ""
+	o.Issuer = strings.TrimRight(strings.TrimSpace(r.FormValue("issuer")), "/")
+	o.ClientID = strings.TrimSpace(r.FormValue("client_id"))
+	if v := r.FormValue("client_secret"); v != "" {
+		o.ClientSecret = v
+	}
+	if r.FormValue("clear_secret") != "" {
+		o.ClientSecret = ""
+	}
+	o.AllowedUsers = strings.Join(splitList(r.FormValue("allowed_users")), ", ")
+	o.AllowedGroups = strings.Join(splitList(r.FormValue("allowed_groups")), ", ")
+	o.ViewerUsers = strings.Join(splitList(r.FormValue("viewer_users")), ", ")
+	o.ViewerGroups = strings.Join(splitList(r.FormValue("viewer_groups")), ", ")
+	o.DisablePassword = r.FormValue("disable_password") != ""
+	if !o.Enabled {
+		o.DisablePassword = false
+		return nil
+	}
+	if err := validIssuerURL(o.Issuer); err != nil {
+		return err
+	}
+	if o.ClientID == "" {
+		return errors.New("client id fehlt")
+	}
+	if o.AllowedUsers == "" && o.AllowedGroups == "" {
+		return errors.New("mindestens einen erlaubten benutzer oder eine gruppe eintragen")
+	}
+	return nil
 }

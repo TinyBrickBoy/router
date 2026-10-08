@@ -110,10 +110,10 @@ func (s *Server) rpkiCheckAll(w http.ResponseWriter, r *http.Request) {
 	}
 	msg := fmt.Sprintf("RPKI für %d Präfixe geprüft", len(st.Prefixes))
 	if invalid > 0 {
-		http.Redirect(w, r, "/prefixes?err="+url.QueryEscape(fmt.Sprintf("%s: %d davon RPKI invalid, bitte ROAs prüfen", msg, invalid)), http.StatusSeeOther)
+		s.redirectFlash(w, r, "/prefixes", "err", fmt.Sprintf("%s: %d davon RPKI invalid, bitte ROAs prüfen", msg, invalid))
 		return
 	}
-	http.Redirect(w, r, "/prefixes?msg="+url.QueryEscape(msg), http.StatusSeeOther)
+	s.redirectFlash(w, r, "/prefixes", "msg", msg)
 }
 
 func (s *Server) settingsRPKI(w http.ResponseWriter, r *http.Request) {

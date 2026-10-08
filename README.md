@@ -122,10 +122,10 @@ Under **Einstellungen → OpenID Connect Login** add an OIDC provider (Keycloak,
 
 1. Create a confidential client at the provider, with the URL shown in the web interface as redirect URI (`https://<your-url>/auth/callback`)
 2. Enter issuer URL, client ID and client secret
-3. Define allowed users (e-mail, username or `sub`) and/or groups (`groups` claim). Additionally you can define read-only users and groups, who log in as viewers. Nobody gets in without being allowed.
+3. Define allowed users (e-mail, username or `sub`) and/or groups (`groups` claim). Additionally you can define read-only users and groups, who log in as viewers. Nobody gets in without being allowed. An e-mail address only counts if the provider marks it as verified (`email_verified: true`), otherwise use the username, `sub` or a group.
 4. Optionally disable the password login
 
-The authorization code flow with PKCE, state and nonce is used. The ID token is fetched directly over TLS from the token endpoint and `iss`, `aud`, `azp`, `exp` and `nonce` are verified.
+The authorization code flow with PKCE, state and nonce is used. The ID token is fetched directly over TLS from the token endpoint and `iss`, `aud`, `azp`, `exp` and `nonce` are verified. Authorization and token endpoint must use HTTPS, redirects to plain HTTP are refused. Changing the provider or the allowed users and groups ends all OpenID sessions, so removed users are logged out immediately.
 
 **Emergency access**: `sudo bgp-router passwd && sudo systemctl restart bgp-router` sets a new password for the main user and enables the password login again. `-user <name>` does the same for another local user.
 
@@ -197,12 +197,13 @@ With `-dry-run` all system commands are only logged, handy for trying things out
 ## Security
 
 - HTTPS by default, public key pinning for the setup script and agents, self updates only over TLS with SHA256 verification
-- Login: PBKDF2 password hashes, lockout after 10 failed attempts per IP for 15 minutes, optional OpenID Connect
-- Roles: viewers are read-only, enforced by the server, and never see secrets
+- Login: PBKDF2 password hashes, lockout after 10 failed attempts per IP (IPv6 per /64) for 15 minutes, unknown usernames take as long as known ones, optional OpenID Connect
+- Roles: viewers are read-only, enforced by the server, and never see secrets (BGP passwords are also hidden in the generated BIRD config on the overview)
 - Sessions: signed cookies (`HttpOnly`, `Secure`, `SameSite=Strict`) bound to the user. Logging out invalidates all of that user's sessions, and so does a password change.
-- CSRF tokens for all actions, strict content security policy without inline JavaScript, `X-Frame-Options: DENY`
+- CSRF tokens for all actions, strict content security policy without inline JavaScript, `X-Frame-Options: DENY`, pages are never cached (`Cache-Control: no-store`)
+- Messages shown after an action are signed, so a crafted link cannot display its own text as a message of the router
 - Audit log of all changes, without secrets
-- Input is validated: no control characters in configs, no default route or private networks as prefix. The agent also validates all values from the router before applying them as root.
+- Input is validated: no control characters in configs, no default route or private networks as prefix, WireGuard keys from agents must be in canonical form and unique per backend. The agent also validates all values from the router before applying them as root.
 - State, keys and tokens live in `/var/lib/bgp-router` (readable by root only), the initial password never appears in the log
 - Backups are encrypted and authenticated (AES-256-GCM)
 

@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -124,6 +125,7 @@ func TestOIDCLogin(t *testing.T) {
 	}{
 		{"nicht freigeschaltet", map[string]any{"email": "boese@example.com"}, "good-code", false, "nicht+freigeschaltet"},
 		{"email nicht verifiziert", map[string]any{"email": "admin@example.com", "email_verified": false}, "good-code", false, "nicht+freigeschaltet"},
+		{"email_verified fehlt", map[string]any{"email": "admin@example.com"}, "good-code", false, "nicht+freigeschaltet"},
 		{"falsche nonce", map[string]any{"email": "admin@example.com"}, "good-code", true, "ID+Token+ung"},
 		{"falscher code", map[string]any{"email": "admin@example.com"}, "bad-code", false, "Token+Austausch"},
 		{"falsche aud", map[string]any{"email": "admin@example.com", "aud": "anderer"}, "good-code", false, "ID+Token+ung"},
@@ -149,5 +151,71 @@ func TestOIDCLogin(t *testing.T) {
 	pr, _ := http.PostForm(ts.URL+"/login", url.Values{"username": {"admin"}, "password": {"passwort123"}})
 	if pr.StatusCode != http.StatusForbidden {
 		t.Errorf("passwort login trotz deaktivierung möglich: %d", pr.StatusCode)
+	}
+}
+
+func TestOIDCDiscoveryRequiresHTTPS(t *testing.T) {
+	var token string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"issuer": "http://" + r.Host, "authorization_endpoint": "http://" + r.Host + "/authorize", "token_endpoint": token})
+	})
+	mux.HandleFunc("/redirect", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://idp.example.com/token", http.StatusTemporaryRedirect)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	for tok, ok := range map[string]bool{srv.URL + "/token": true, "https://idp.example.com/token": true, "http://idp.example.com/token": false, "": false} {
+		token = tok
+		var c oidcClient
+		if _, err := c.discover(context.Background(), srv.URL); (err == nil) != ok {
+			t.Errorf("token endpoint %q: %v", tok, err)
+		}
+	}
+	// keine Weiterleitung vom Token Endpoint auf http
+	var c oidcClient
+	token = srv.URL + "/token"
+	if _, err := c.discover(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.http.Post(srv.URL+"/redirect", "text/plain", nil); err == nil || !strings.Contains(err.Error(), "unsichere weiterleitung") {
+		t.Errorf("weiterleitung auf http erlaubt: %v", err)
+	}
+}
+
+func TestOIDCProviderErrorNotReflected(t *testing.T) {
+	ts := newTestServer(t, store.OIDCSettings{Enabled: true, Issuer: "https://idp.example.com", ClientID: "router", AllowedUsers: "max"})
+	c := noRedirect(nil)
+	for e, want := range map[string]string{"access_denied": "access_denied", "<b>Bitte</b>": "unbekannter"} {
+		resp, err := c.Get(ts.URL + "/auth/callback?error=" + url.QueryEscape(e) + "&error_description=" + url.QueryEscape("Bitte Passwort an boese@example.com"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		loc, _ := url.Parse(resp.Header.Get("Location"))
+		if got := loc.Query().Get("err"); !strings.Contains(got, want) || strings.Contains(got, "Bitte") {
+			t.Errorf("%q: angezeigt wird %q", e, got)
+		}
+	}
+}
+
+func TestOIDCSessionsEndWhenAccessChanges(t *testing.T) {
+	f := newFakeIdP(t)
+	ts := newTestServer(t, store.OIDCSettings{Enabled: true, Issuer: f.srv.URL, ClientID: "router", ClientSecret: "s3cret", AllowedUsers: "max"})
+	f.claims = map[string]any{"preferred_username": "max"}
+	resp, c := f.login(t, ts.URL, "good-code", false)
+	if resp.StatusCode != 200 {
+		t.Fatalf("callback status %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if r, _ := c.Get(ts.URL + "/prefixes"); r.StatusCode != 200 {
+		t.Fatalf("nach login kein zugriff: %d", r.StatusCode)
+	}
+
+	a, csrf := loginAs(t, ts.URL, "admin", "passwort123")
+	a.PostForm(ts.URL+"/settings/oidc", url.Values{"csrf": {csrf}, "enabled": {"1"}, "issuer": {f.srv.URL}, "client_id": {"router"}, "allowed_users": {"moritz"}})
+	if r, _ := c.Get(ts.URL + "/prefixes"); r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("entfernter benutzer bleibt angemeldet: %d", r.StatusCode)
+	}
+	if r, _ := a.Get(ts.URL + "/prefixes"); r.StatusCode != 200 {
+		t.Fatalf("lokale session beendet: %d", r.StatusCode)
 	}
 }

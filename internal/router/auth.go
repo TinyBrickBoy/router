@@ -41,6 +41,16 @@ func SetPassword(a *store.User, password string) error {
 	return nil
 }
 
+// dummyUser hat einen Hash mit zufälligem Passwort. Bei unbekannten Benutzernamen
+// wird gegen ihn geprüft, damit die Antwortzeit nicht verrät, ob es den Benutzer gibt.
+var dummyUser = sync.OnceValue(func() store.User {
+	u := store.User{Username: "-"}
+	if err := SetPassword(&u, store.RandomHex(32)); err != nil {
+		panic(err)
+	}
+	return u
+})
+
 func checkPassword(a store.User, password string) bool {
 	if a.PasswordHash == "" {
 		return false
@@ -160,7 +170,8 @@ func (s *Server) secureCookies(r *http.Request) bool {
 	return r.TLS != nil || strings.HasPrefix(s.Store.Get().Settings.PublicURL, "https://")
 }
 
-// loginLimiter begrenzt fehlgeschlagene Logins pro Client IP.
+// loginLimiter begrenzt fehlgeschlagene Logins pro Client IP. IPv6 Adressen
+// zählen pro /64, sonst könnte ein Angreifer einfach durch sein Netz rotieren.
 type loginLimiter struct {
 	mu   sync.Mutex
 	fail map[string][]time.Time
@@ -181,6 +192,15 @@ func (l *loginLimiter) recent(ip string) []time.Time {
 	return keep
 }
 
+// limitKey fasst IPv6 Adressen zu ihrem /64 zusammen.
+func limitKey(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil || !a.Is6() || a.Is4In6() {
+		return ip
+	}
+	return netip.PrefixFrom(a, 64).Masked().String()
+}
+
 // Blocked meldet, ob die IP gesperrt ist.
 func (l *loginLimiter) Blocked(ip string) bool {
 	l.mu.Lock()
@@ -188,6 +208,7 @@ func (l *loginLimiter) Blocked(ip string) bool {
 	if l.fail == nil {
 		return false
 	}
+	ip = limitKey(ip)
 	l.fail[ip] = l.recent(ip)
 	return len(l.fail[ip]) >= loginMaxFails
 }
@@ -195,6 +216,7 @@ func (l *loginLimiter) Blocked(ip string) bool {
 func (l *loginLimiter) Fail(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	ip = limitKey(ip)
 	if l.fail == nil {
 		l.fail = map[string][]time.Time{}
 	}
@@ -211,7 +233,7 @@ func (l *loginLimiter) Fail(ip string) {
 func (l *loginLimiter) Reset(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.fail, ip)
+	delete(l.fail, limitKey(ip))
 }
 
 // clientIP nutzt X-Forwarded-For nur, wenn die Anfrage von localhost kommt (Reverse Proxy).
