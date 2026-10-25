@@ -44,6 +44,11 @@ type Config struct {
 	PinSHA256 string `json:"pin_sha256"`
 	// AllowInsecureUpdates erlaubt Selbst-Updates über HTTP ohne TLS (nicht empfohlen).
 	AllowInsecureUpdates bool `json:"allow_insecure_updates"`
+	// ReplyMark ist das Bit, mit dem Verbindungen aus dem Tunnel markiert werden,
+	// damit auch Antworten aus Docker Containern über den Tunnel zurückgehen.
+	ReplyMark uint32 `json:"reply_mark"`
+	// DisableReplyMark schaltet diese Markierung ab.
+	DisableReplyMark bool `json:"disable_reply_mark"`
 }
 
 // LoadConfig liest die Konfiguration und setzt Standardwerte.
@@ -68,6 +73,10 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if c.RulePriority == 0 {
 		c.RulePriority = 10200
+	}
+	if c.ReplyMark == 0 {
+		// ein einzelnes Bit, das weder Docker, Kubernetes, Tailscale noch wg-quick nutzen
+		c.ReplyMark = 0x2000000
 	}
 	if c.IntervalSeconds <= 0 {
 		c.IntervalSeconds = 30
@@ -317,6 +326,11 @@ func (a *Agent) apply(cfg api.AgentConfig) error {
 	}
 	add("routen", m.SyncRoutes(routes))
 	add("policy rules", m.SyncRules(c.RulePriority, rules))
+	// Antworten, die nicht von unseren IPs stammen (Docker DNAT), über die
+	// Markierung der Verbindung zurück in den Tunnel schicken
+	replyOn := !c.DisableReplyMark
+	add("reply mark", m.SyncReplyMark("iptables", c.Interface, c.ReplyMark, table, c.RulePriority-1, replyOn && has4))
+	add("reply mark", m.SyncReplyMark("ip6tables", c.Interface, c.ReplyMark, table, c.RulePriority-1, replyOn && has6))
 	return errors.Join(errs...)
 }
 
@@ -351,7 +365,10 @@ func (a *Agent) selfUpdate(u *api.Update) error {
 // Down entfernt die komplette Konfiguration des Agents.
 func (a *Agent) Down() error {
 	m := &netcfg.Manager{R: a.Runner}
+	table := strconv.Itoa(a.Cfg.Table)
 	return errors.Join(
+		m.SyncReplyMark("iptables", a.Cfg.Interface, a.Cfg.ReplyMark, table, a.Cfg.RulePriority-1, false),
+		m.SyncReplyMark("ip6tables", a.Cfg.Interface, a.Cfg.ReplyMark, table, a.Cfg.RulePriority-1, false),
 		m.SyncRules(a.Cfg.RulePriority, nil),
 		m.SyncRoutes(nil),
 		m.DeleteLink(a.Cfg.Interface),
