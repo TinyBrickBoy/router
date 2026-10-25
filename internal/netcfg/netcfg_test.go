@@ -84,3 +84,30 @@ func TestSyncDryRun(t *testing.T) {
 		}
 	}
 }
+
+func TestSyncReplyMarkDryRun(t *testing.T) {
+	var buf bytes.Buffer
+	m := &Manager{R: &sysexec.Runner{DryRun: true, Logger: log.New(&buf, "", 0)}}
+	if err := m.SyncReplyMark("iptables", "wg-bgp", 0x2000000, "51820", 10199, true); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"ip -4 rule add priority 10199 fwmark 0x2000000/0x2000000 table 51820",
+		"iptables -w -t mangle -A BGP-AGENT-REPLY -i wg-bgp -m conntrack --ctstate NEW -j CONNMARK --set-xmark 0x2000000/0x2000000",
+		"iptables -w -t mangle -A BGP-AGENT-REPLY ! -i wg-bgp -m connmark --mark 0x2000000/0x2000000 -j MARK --set-xmark 0x2000000/0x2000000",
+		"iptables -w -t mangle -I PREROUTING 1 -j BGP-AGENT-REPLY",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("fehlt %q in\n%s", want, out)
+		}
+	}
+
+	buf.Reset()
+	if err := m.SyncReplyMark("ip6tables", "wg-bgp", 0x2000000, "51820", 10199, false); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "ip6tables -w -t mangle -X BGP-AGENT-REPLY") || strings.Contains(out, "rule add") {
+		t.Errorf("abschalten erwartet nur Aufräumen:\n%s", out)
+	}
+}
