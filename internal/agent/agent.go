@@ -49,6 +49,8 @@ type Config struct {
 	ReplyMark uint32 `json:"reply_mark"`
 	// DisableReplyMark schaltet diese Markierung ab.
 	DisableReplyMark bool `json:"disable_reply_mark"`
+	// DisablePrefixRoutes schaltet die Routen zu den Präfixen des Routers über den Tunnel ab.
+	DisablePrefixRoutes bool `json:"disable_prefix_routes"`
 }
 
 // LoadConfig liest die Konfiguration und setzt Standardwerte.
@@ -240,6 +242,12 @@ func validateConfig(cfg *api.AgentConfig) error {
 			return fmt.Errorf("ungültige tunnel adresse %q", t)
 		}
 	}
+	for _, r := range cfg.Prefixes {
+		p, err := netip.ParsePrefix(r)
+		if err != nil || (p.Addr().Is4() && p.Bits() < 8) || (p.Addr().Is6() && p.Bits() < 16) {
+			return fmt.Errorf("ungültiges präfix %q", r)
+		}
+	}
 	for _, r := range cfg.Routes {
 		p, err := netip.ParsePrefix(r)
 		// niemals eine Default Route oder riesige Netze über den Tunnel lokal registrieren
@@ -324,6 +332,9 @@ func (a *Agent) apply(cfg api.AgentConfig) error {
 	if has6 {
 		routes = append(routes, netcfg.Route{Dst: netip.MustParsePrefix("::/0"), Dev: c.Interface, Table: table})
 	}
+	if !c.DisablePrefixRoutes {
+		routes = append(routes, prefixRoutes(cfg, addrs, c.Interface)...)
+	}
 	add("routen", m.SyncRoutes(routes))
 	add("policy rules", m.SyncRules(c.RulePriority, rules))
 	// Antworten, die nicht von unseren IPs stammen (Docker DNAT), über die
@@ -332,6 +343,38 @@ func (a *Agent) apply(cfg api.AgentConfig) error {
 	add("reply mark", m.SyncReplyMark("iptables", c.Interface, c.ReplyMark, table, c.RulePriority-1, replyOn && has4))
 	add("reply mark", m.SyncReplyMark("ip6tables", c.Interface, c.ReplyMark, table, c.RulePriority-1, replyOn && has6))
 	return errors.Join(errs...)
+}
+
+// prefixRoutes leitet die Präfixe des Routers über den Tunnel. Sonst gingen
+// Verbindungen zu anderen Backends übers normale Netz, das die Präfixe nicht
+// (mehr) zu uns routet. Absender ist eine eigene Adresse aus dem Präfix, damit
+// die Antwort ebenfalls durch den Tunnel zurückkommt.
+func prefixRoutes(cfg api.AgentConfig, own []netip.Prefix, dev string) []netcfg.Route {
+	endpoint := netip.Addr{}
+	if host, _, err := net.SplitHostPort(cfg.Endpoint); err == nil {
+		endpoint, _ = netip.ParseAddr(host)
+	}
+	var routes []netcfg.Route
+	for _, s := range cfg.Prefixes {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			continue
+		}
+		p = p.Masked()
+		// der Tunnel selbst muss weiter übers normale Netz laufen
+		if endpoint.IsValid() && p.Contains(endpoint.Unmap()) {
+			continue
+		}
+		r := netcfg.Route{Dst: p, Dev: dev, Table: "main"}
+		for _, a := range own {
+			if p.Contains(a.Addr()) {
+				r.Src = a.Addr()
+				break
+			}
+		}
+		routes = append(routes, r)
+	}
+	return routes
 }
 
 func (a *Agent) selfUpdate(u *api.Update) error {

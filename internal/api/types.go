@@ -18,7 +18,10 @@ type AgentConfig struct {
 	Keepalive       int      `json:"keepalive"`
 	TunnelAddrs     []string `json:"tunnel_addrs"`
 	Routes          []string `json:"routes"`
-	Update          *Update  `json:"update,omitempty"`
+	// Prefixes sind die eigenen Präfixe des Routers. Der Agent erreicht sie über
+	// den Tunnel, auch wenn das normale Netz des Backends sie nicht routet.
+	Prefixes []string `json:"prefixes,omitempty"`
+	Update   *Update  `json:"update,omitempty"`
 }
 
 // Update fordert den Agent auf, sich auf ein neues Binary zu aktualisieren.
