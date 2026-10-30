@@ -167,6 +167,8 @@ func (a *Applier) apply(st store.State) (string, error) {
 		}
 	}
 
+	routes = append(routes, a.applyGRE(m, s.GRE, add)...)
+
 	add("routen", m.SyncRoutes(routes))
 
 	var bird string
@@ -180,6 +182,74 @@ func (a *Applier) apply(st store.State) (string, error) {
 		}
 	}
 	return bird, errors.Join(errs...)
+}
+
+// greTunnel prüft einen GRE Tunnel aus den Einstellungen.
+func greTunnel(g store.GRETunnel) (netcfg.GRETunnel, error) {
+	t := netcfg.GRETunnel{Name: g.Name, MTU: g.MTU}
+	var err error
+	if !validGREName(g.Name) {
+		return t, fmt.Errorf("ungültiger interface name")
+	}
+	if t.Local, err = netip.ParseAddr(g.Local); err != nil || !t.Local.Is4() {
+		return t, fmt.Errorf("lokale adresse muss ipv4 sein")
+	}
+	if t.Remote, err = netip.ParseAddr(g.Remote); err != nil || !t.Remote.Is4() {
+		return t, fmt.Errorf("remote adresse muss ipv4 sein")
+	}
+	if t.Address, err = netip.ParsePrefix(g.Address); err != nil || !t.Address.Addr().Is4() {
+		return t, fmt.Errorf("tunneladresse muss ipv4 mit präfixlänge sein")
+	}
+	if t.MTU == 0 {
+		t.MTU = store.GREDefaultMTU
+	}
+	if g.ReplyRouting {
+		if g.Slot < 1 || g.Slot > netcfg.GREMaxSlots {
+			return t, fmt.Errorf("ungültiger slot %d", g.Slot)
+		}
+		t.Mark = netcfg.GREMark(g.Slot)
+	}
+	return t, nil
+}
+
+// applyGRE richtet die GRE Tunnel ein, inklusive MSS Clamping und Reply
+// Routing, und liefert die Routen der Reply Tabellen.
+func (a *Applier) applyGRE(m *netcfg.Manager, cfg []store.GRETunnel, add func(string, error)) []netcfg.Route {
+	var keep []string
+	for _, g := range cfg {
+		keep = append(keep, g.Name)
+	}
+	// zuerst aufräumen: ein umbenannter Tunnel mit gleichem local/remote ließe sich sonst nicht anlegen
+	add("gre aufräumen", m.RemoveStaleGRE(keep))
+
+	var tunnels []netcfg.GRETunnel
+	var rules []netcfg.MarkRule
+	var routes []netcfg.Route
+	for _, g := range cfg {
+		t, err := greTunnel(g)
+		if err != nil {
+			add("gre "+g.Name, err)
+			continue
+		}
+		tunnels = append(tunnels, t)
+		if err := m.EnsureGRE(t); err != nil {
+			add("gre "+g.Name, err)
+			continue
+		}
+		if t.Mark == 0 {
+			continue
+		}
+		table := netcfg.GRETable(g.Slot)
+		rules = append(rules, netcfg.MarkRule{Mark: t.Mark, Mask: netcfg.GREMarkMask, Table: table})
+		r := netcfg.Route{Dst: netip.MustParsePrefix("0.0.0.0/0"), Dev: t.Name, Table: table}
+		if peer, ok := netcfg.GREPeer(t.Address); ok {
+			r.Via = peer
+		}
+		routes = append(routes, r)
+	}
+	add("gre reply routing", m.SyncMarkRules(netcfg.GRERulePriority, rules))
+	add("gre firewall", m.SyncGREFirewall(filepath.Join(a.StateDir, "gre.nft"), tunnels))
+	return routes
 }
 
 func (a *Applier) applyBird(sys store.SystemSettings, conf string) error {

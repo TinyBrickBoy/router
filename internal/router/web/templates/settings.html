@@ -32,6 +32,51 @@
 </section>
 
 <section class="card">
+  <h2>GRE-Tunnel</h2>
+  <p class="muted">GRE Tunnel z.B. zu einem DDoS Schutz Anbieter. Ein vorhandenes Interface mit gleichem Namen, lokaler und Remote Adresse wird ohne Unterbrechung übernommen. MSS Clamping ist immer aktiv. <strong>Reply Routing</strong> schickt Antworten auf Verbindungen, die über den Tunnel ankommen (auch von den Backends), wieder durch den Tunnel zurück; alles andere läuft weiter über das normale Netz. Die BGP Session über den Tunnel als Neighbor oben anlegen (Tunneladresse der Gegenstelle, Quelladresse = eigene Tunneladresse, Multihop 0).</p>
+  <table>
+    <thead><tr><th>Interface</th><th>Lokal</th><th>Remote</th><th>Tunneladresse</th><th>MTU</th><th>Reply Routing</th><th></th></tr></thead>
+    <tbody>
+    {{range .S.Settings.GRE}}
+      <tr>
+        <td class="mono">{{.Name}}</td><td class="mono">{{.Local}}</td><td class="mono">{{.Remote}}</td><td class="mono">{{.Address}}</td>
+        <td>{{.MTU}}</td><td>{{if .ReplyRouting}}<span class="badge ok">aktiv</span>{{else}}–{{end}}</td>
+        <td class="actions"><form method="post" action="/settings/gre/{{.ID}}/delete" data-confirm="GRE Tunnel {{.Name}} löschen? Das Interface wird entfernt."><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form></td>
+      </tr>
+      <tr class="edit-row">
+        <td colspan="7">
+          <details class="edit"><summary>{{.Name}} bearbeiten</summary>
+            <form method="post" action="/settings/gre/{{.ID}}" class="grid-form">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <label>Interface<input name="name" value="{{.Name}}" maxlength="15" required></label>
+              <label>Lokale Adresse<input name="local" value="{{.Local}}" required></label>
+              <label>Remote Adresse<input name="remote" value="{{.Remote}}" required></label>
+              <label>Tunneladresse (mit Präfixlänge)<input name="address" value="{{.Address}}" required></label>
+              <label>MTU<input name="mtu" type="number" min="576" max="9000" value="{{.MTU}}"></label>
+              <label class="check"><input type="checkbox" name="reply_routing" {{if .ReplyRouting}}checked{{end}}> Reply Routing</label>
+              <div class="wide"><button class="primary">Speichern</button></div>
+            </form>
+          </details>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7" class="muted">Keine GRE Tunnel.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  <form method="post" action="/settings/gre" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Interface<input name="name" placeholder="gre-ddos" maxlength="15" required></label>
+    <label>Lokale Adresse<input name="local" placeholder="{{or .S.Settings.RouterID "198.51.100.1"}}" required></label>
+    <label>Remote Adresse<input name="remote" placeholder="203.0.113.1" required></label>
+    <label>Tunneladresse (mit Präfixlänge)<input name="address" placeholder="100.64.0.5/31" required></label>
+    <label>MTU<input name="mtu" type="number" min="576" max="9000" value="1476"></label>
+    <label class="check"><input type="checkbox" name="reply_routing"> Reply Routing</label>
+    <div class="wide"><button class="primary">GRE Tunnel hinzufügen</button></div>
+  </form>
+</section>
+
+<section class="card">
   <h2>RPKI {{if .S.Settings.RPKI.RTRHost}}<span class="badge ok">aktiv</span>{{else}}<span class="badge">aus</span>{{end}}</h2>
   <p class="muted">Optionaler RTR Validator (z.B. Routinator, StayRTR, rpki-client). Ist er gesetzt, kündigt BIRD Präfixe nicht an, die für AS{{.S.Settings.ASN}} RPKI invalid sind. Leer lassen zum Deaktivieren. Der ROA Status lässt sich auch ohne Validator unter <a href="/prefixes">Präfixe</a> prüfen.</p>
   <form method="post" action="/settings/rpki" class="grid-form">
@@ -205,17 +250,18 @@
     </form>
   </div>
   <table>
-    <thead><tr><th>Name</th><th>Neighbor</th><th>Remote AS</th><th>Multihop</th><th>Quelle</th><th>Passwort</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Neighbor</th><th>Remote AS</th><th>Multihop</th><th>Quelle</th><th>Passwort</th><th>Export</th><th></th></tr></thead>
     <tbody>
     {{range .F.Neighbors}}
       <tr>
         <td>{{.Name}}</td><td class="mono">{{.Address}}</td><td>AS{{.RemoteASN}}</td>
         <td>{{if .Multihop}}{{.Multihop}}{{else}}–{{end}}</td><td class="mono">{{or .SourceAddress "–"}}</td>
         <td>{{if .Password}}gesetzt{{else}}–{{end}}</td>
+        <td>{{if .ExportNone}}<span class="badge">nur Session</span>{{else if .Prepend}}Prepend {{.Prepend}}×{{else}}–{{end}}</td>
         <td class="actions"><form method="post" action="/settings/neighbors/{{$.Key}}/{{.ID}}/delete" data-confirm="Neighbor löschen?"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger">Löschen</button></form></td>
       </tr>
       <tr class="edit-row">
-        <td colspan="7">
+        <td colspan="8">
           <details class="edit"><summary>{{.Name}} bearbeiten</summary>
             <form method="post" action="/settings/neighbors/{{$.Key}}/{{.ID}}" class="grid-form">
               <input type="hidden" name="csrf" value="{{$.CSRF}}">
@@ -226,13 +272,15 @@
               <label>Quelladresse (optional)<input name="source" value="{{.SourceAddress}}"></label>
               <label>BGP Passwort (leer = unverändert)<input name="password" type="password" autocomplete="off"></label>
               {{if .Password}}<label class="check"><input type="checkbox" name="clear_password"> BGP Passwort entfernen</label>{{end}}
+              <label>Prepend (0 bis 10, zusätzlich zu den Präfixen)<input name="prepend" type="number" min="0" max="10" value="{{.Prepend}}"></label>
+              <label class="check"><input type="checkbox" name="export_none" {{if .ExportNone}}checked{{end}}> Nur Session, nichts ankündigen</label>
               <div class="wide"><button class="primary">Speichern</button></div>
             </form>
           </details>
         </td>
       </tr>
     {{else}}
-      <tr><td colspan="7" class="muted">Keine Neighbors.</td></tr>
+      <tr><td colspan="8" class="muted">Keine Neighbors.</td></tr>
     {{end}}
     </tbody>
   </table>
@@ -244,6 +292,8 @@
     <label>Multihop (0 = direkt)<input name="multihop" type="number" min="0" max="255" value="0"></label>
     <label>Quelladresse (optional)<input name="source" placeholder="{{.PhSrc}}"></label>
     <label>BGP Passwort (optional)<input name="password" type="password" autocomplete="off"></label>
+    <label>Prepend (0 bis 10, zusätzlich zu den Präfixen)<input name="prepend" type="number" min="0" max="10" value="0"></label>
+    <label class="check"><input type="checkbox" name="export_none"> Nur Session, nichts ankündigen</label>
     <div class="wide"><button class="primary">Neighbor hinzufügen</button></div>
   </form>
 </section>

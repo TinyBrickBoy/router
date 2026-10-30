@@ -102,7 +102,29 @@ func GenerateBird(st store.State) (string, error) {
 				return "", fmt.Errorf("neighbor %q: ungültige adresse", n.Name)
 			}
 			name := nonIdent.ReplaceAllString(n.Name, "_")
-			fmt.Fprintf(&b, "\nprotocol bgp %s {\n", strings.TrimRight(fmt.Sprintf("bgp%s_%d_%s", fam.name[3:], i+1, name), "_"))
+			proto := strings.TrimRight(fmt.Sprintf("bgp%s_%d_%s", fam.name[3:], i+1, name), "_")
+			// Traffic Engineering pro Neighbor, ohne Optionen bleibt der gemeinsame Export
+			nexport := export
+			switch {
+			case n.ExportNone:
+				nexport = "none"
+			case n.Prepend != 0:
+				if n.Prepend < 0 || n.Prepend > maxPrepend {
+					return "", fmt.Errorf("neighbor %q: ungültiges prepend", n.Name)
+				}
+				filter := "export_" + proto
+				fmt.Fprintf(&b, "\nfilter %s {\n\tif proto != %q then reject;\n", filter, static)
+				if roa != "" {
+					fmt.Fprintf(&b, "\tif %s = ROA_INVALID then reject;\n", roa)
+				}
+				b.WriteString(te)
+				for j := 0; j < n.Prepend; j++ {
+					fmt.Fprintf(&b, "\tbgp_path.prepend(%d);\n", s.ASN)
+				}
+				b.WriteString("\taccept;\n}\n")
+				nexport = "filter " + filter
+			}
+			fmt.Fprintf(&b, "\nprotocol bgp %s {\n", proto)
 			if n.Name != "" {
 				fmt.Fprintf(&b, "\tdescription %s;\n", birdString(n.Name))
 			}
@@ -121,7 +143,7 @@ func GenerateBird(st store.State) (string, error) {
 			if n.Password != "" {
 				fmt.Fprintf(&b, "\tpassword %s;\n", birdString(n.Password))
 			}
-			fmt.Fprintf(&b, "\t%s {\n\t\timport none;\n\t\texport %s;\n\t};\n}\n", fam.name, export)
+			fmt.Fprintf(&b, "\t%s {\n\t\timport none;\n\t\texport %s;\n\t};\n}\n", fam.name, nexport)
 		}
 	}
 	return b.String(), nil
