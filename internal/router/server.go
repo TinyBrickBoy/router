@@ -769,7 +769,11 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	p := s.newPage(r, "Einstellungen", "settings")
 	p.Callback = s.redirectURI(p.S, r)
 	p.BaseURL = s.baseURL(p.S, r)
-	p.Pin = s.pinFor(p.BaseURL)
+	// Der Pin steht nur in der Firewall Karte für Admins. Nur dann prüfen, sonst
+	// könnte ein Viewer per Host Header TLS Verbindungen zu beliebigen Zielen auslösen.
+	if p.IsAdmin && p.S.Settings.FirewallToken != "" {
+		p.Pin = s.pinFor(p.BaseURL)
+	}
 	// Geheimnisse landen nie im HTML: Webhook URLs enthalten ein Token
 	p.NotifyDiscord = p.S.Settings.Notify.DiscordWebhook != ""
 	p.NotifyWebhook = p.S.Settings.Notify.WebhookURL != ""

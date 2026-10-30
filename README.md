@@ -163,7 +163,7 @@ Metrics include BGP session state, announced prefixes and their RPKI result, app
 
 The [Edge Firewall](https://github.com/TinyBrickBoy/Edge-Firewall) runs on the same VPS and filters the traffic to and from every single IP of your prefixes with nftables (default: everything allowed, then per subnet and per IP policies and rules, via web interface or REST API, with OpenID Connect login).
 
-Under **Einstellungen → Edge Firewall** (settings → edge firewall) admins enable a read only API for it. The card shows router URL, token and, with the self signed certificate, the pin to enter in the firewall. The firewall then fetches `GET /api/v1/network` with the token as bearer token: the prefixes and the assignments including the target name, no secrets. New prefixes automatically become protected subnets there. Optionally enter the URL of the firewall web interface, then the menu links to it. Without a token the endpoint is disabled.
+Under **Einstellungen → Edge Firewall** (settings → edge firewall) admins enable a read-only API for it. The card shows router URL, token and, with the self-signed certificate, the pin to enter in the firewall. The firewall then fetches `GET /api/v1/network` with the token as bearer token: the prefixes and the assignments including the target name, no secrets. New prefixes automatically become protected subnets there. Optionally enter the URL of the firewall web interface, then the menu links to it. Without a token the endpoint is disabled.
 
 ## Backup and restore
 

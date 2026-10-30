@@ -2,6 +2,7 @@ package router
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -57,9 +58,16 @@ func TestFirewallNetwork(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	var raw strings.Builder
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// auf der rohen Antwort prüfen: beim Dekodieren fielen unbekannte Felder weg
+	if strings.Contains(string(body), "geheim") {
+		t.Error("antwort enthält das agent token")
+	}
 	var n api.Network
-	if err := json.NewDecoder(resp.Body).Decode(&n); err != nil {
+	if err := json.Unmarshal(body, &n); err != nil {
 		t.Fatal(err)
 	}
 	if len(n.Prefixes) != 1 || n.Prefixes[0].CIDR != "203.0.113.0/24" || !n.Prefixes[0].Announce {
@@ -67,10 +75,5 @@ func TestFirewallNetwork(t *testing.T) {
 	}
 	if len(n.Assignments) != 2 || n.Assignments[0].TargetName != "WireGuard → home" || n.Assignments[1].TargetName != "Lokal (VPS)" {
 		t.Errorf("zuweisungen: %+v", n.Assignments)
-	}
-	data, _ := json.Marshal(n)
-	raw.Write(data)
-	if strings.Contains(raw.String(), "geheim") {
-		t.Error("antwort enthält das agent token")
 	}
 }
