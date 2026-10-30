@@ -159,6 +159,12 @@ scrape_configs:
 
 Metrics include BGP session state, announced prefixes and their RPKI result, apply status, backend online state and last seen time, pending agent updates and WireGuard handshake and traffic per backend (`bgp_router_*`). Without a token the endpoint is disabled.
 
+## Edge Firewall
+
+The [Edge Firewall](https://github.com/TinyBrickBoy/Edge-Firewall) runs on the same VPS and filters the traffic to and from every single IP of your prefixes with nftables (default: everything allowed, then per subnet and per IP policies and rules, via web interface or REST API, with OpenID Connect login).
+
+Under **Einstellungen → Edge Firewall** (settings → edge firewall) admins enable a read only API for it. The card shows router URL, token and, with the self signed certificate, the pin to enter in the firewall. The firewall then fetches `GET /api/v1/network` with the token as bearer token: the prefixes and the assignments including the target name, no secrets. New prefixes automatically become protected subnets there. Optionally enter the URL of the firewall web interface, then the menu links to it. Without a token the endpoint is disabled.
+
 ## Backup and restore
 
 Under **Einstellungen → Backup und Wiederherstellung** (settings → backup and restore) admins download the complete configuration including users, keys, tokens and the self-signed TLS certificate. The file is encrypted with AES-256-GCM, the key is derived from a passphrase of at least 12 characters with PBKDF2 (600,000 iterations). Without the passphrase the backup cannot be recovered.

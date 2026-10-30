@@ -44,6 +44,10 @@ type Settings struct {
 	Notify    NotifySettings `json:"notify"`
 	// MetricsToken schützt /metrics (leer = Endpoint aus).
 	MetricsToken string `json:"metrics_token"`
+	// FirewallToken schützt /api/v1/network für die Edge Firewall (leer = aus).
+	FirewallToken string `json:"firewall_token,omitempty"`
+	// FirewallURL ist das Webinterface der Edge Firewall (Link im Menü).
+	FirewallURL string `json:"firewall_url,omitempty"`
 }
 
 // OIDCSettings: Login über einen OpenID Connect Provider.
