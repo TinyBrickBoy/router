@@ -184,6 +184,28 @@
 </section>
 
 <section class="card">
+  <h2>Edge Firewall {{if .S.Settings.FirewallToken}}<span class="badge ok">verbunden</span>{{else}}<span class="badge">aus</span>{{end}}</h2>
+  <p class="muted">Die <a href="https://github.com/TinyBrickBoy/Edge-Firewall" rel="noopener">Edge Firewall</a> läuft auf diesem VPS und filtert den Verkehr zu jeder einzelnen IP deiner Präfixe (Standard: alles erlaubt). Sie liest Präfixe und Zuweisungen nur lesend über <code>{{.BaseURL}}/api/v1/network</code>. Trag dort unter Einstellungen → Router diese URL, das Token und den Pin ein.</p>
+  <form method="post" action="/settings/firewall" class="grid-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label class="wide">URL des Firewall Webinterfaces (Link im Menü, leer = kein Link)<input name="firewall_url" value="{{.S.Settings.FirewallURL}}" placeholder="https://router.example.com:8443"></label>
+    <div class="wide"><button class="primary">Speichern</button></div>
+  </form>
+  {{if .S.Settings.FirewallToken}}
+  <label>Router URL</label>
+  <div class="copy"><input readonly value="{{.BaseURL}}" data-select><button type="button" data-copy>Kopieren</button></div>
+  <label>Firewall Token</label>
+  <div class="copy"><input readonly value="{{.S.Settings.FirewallToken}}" data-select><button type="button" data-copy>Kopieren</button></div>
+  {{if .Pin}}<label>Pin (selbst signiertes Zertifikat)</label>
+  <div class="copy"><input readonly value="sha256//{{.Pin}}" data-select><button type="button" data-copy>Kopieren</button></div>{{end}}
+  {{end}}
+  <div class="actions">
+    <form method="post" action="/settings/firewall"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="generate"><button class="primary">{{if .S.Settings.FirewallToken}}Neues Token erzeugen{{else}}Firewall API aktivieren{{end}}</button></form>
+    {{if .S.Settings.FirewallToken}}<form method="post" action="/settings/firewall" data-confirm="Firewall API deaktivieren? Die Firewall behält ihre Regeln, bekommt aber keine Präfixe mehr."><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="disable"><button class="danger">Deaktivieren</button></form>{{end}}
+  </div>
+</section>
+
+<section class="card">
   <h2>Benutzer</h2>
   <p class="muted">Admins dürfen alles, Viewer nur lesen. Der Hauptbenutzer ist immer Admin.</p>
   <table>

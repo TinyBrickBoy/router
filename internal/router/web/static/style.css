@@ -95,3 +95,4 @@ details.edit[open] { display: block; margin: 8px 0; padding: 12px; border: 1px s
 details.edit summary { margin-top: 0; }
 tr.edit-row td { border-top: none; padding-top: 0; }
 body.readonly details.edit { display: none; }
+.card form.grid-form + label { display: block; margin-top: 16px; }

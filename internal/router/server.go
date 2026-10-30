@@ -129,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/oidc", a(s.settingsOIDC))
 	mux.HandleFunc("POST /settings/password", a(s.settingsPassword))
 	mux.HandleFunc("POST /settings/metrics", a(s.settingsMetrics))
+	mux.HandleFunc("POST /settings/firewall", a(s.settingsFirewall))
 	mux.HandleFunc("POST /settings/notify", a(s.settingsNotify))
 	mux.HandleFunc("POST /settings/notify/test", a(s.notifyTest))
 	mux.HandleFunc("POST /settings/users", a(s.userAdd))
@@ -152,6 +153,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /download/{file}", s.download)
 	mux.HandleFunc("POST /api/agent/sync", s.agentSync)
 	mux.HandleFunc("GET /metrics", s.metrics)
+	mux.HandleFunc("GET /api/v1/network", s.firewallNetwork)
 
 	return securityHeaders(mux)
 }
@@ -243,6 +245,7 @@ type page struct {
 	PWLogin  bool
 	Callback string
 	BaseURL  string
+	Pin      string
 
 	NotifyDiscord bool
 	NotifyWebhook bool
@@ -769,6 +772,11 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	p := s.newPage(r, "Einstellungen", "settings")
 	p.Callback = s.redirectURI(p.S, r)
 	p.BaseURL = s.baseURL(p.S, r)
+	// Der Pin steht nur in der Firewall Karte für Admins. Nur dann prüfen, sonst
+	// könnte ein Viewer per Host Header TLS Verbindungen zu beliebigen Zielen auslösen.
+	if p.IsAdmin && p.S.Settings.FirewallToken != "" {
+		p.Pin = s.pinFor(p.BaseURL)
+	}
 	// Geheimnisse landen nie im HTML: Webhook URLs enthalten ein Token
 	p.NotifyDiscord = p.S.Settings.Notify.DiscordWebhook != ""
 	p.NotifyWebhook = p.S.Settings.Notify.WebhookURL != ""
@@ -776,6 +784,7 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	p.S.Settings.Notify.SMTPPassword = ""
 	if !p.IsAdmin {
 		p.S.Settings.MetricsToken = ""
+		p.S.Settings.FirewallToken = ""
 	}
 	s.render(w, "settings", p)
 }
