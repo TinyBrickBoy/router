@@ -128,6 +128,7 @@ type Route struct {
 	Dst   netip.Prefix
 	Dev   string
 	Via   netip.Addr // optionales Gateway
+	Src   netip.Addr // optionale Absender Adresse
 	Table string     // main, local oder Nummer
 }
 
@@ -215,6 +216,9 @@ func (m *Manager) SyncRoutes(desired []Route) error {
 		}
 		if r.Dev != "" {
 			args = append(args, "dev", r.Dev)
+		}
+		if r.Src.IsValid() {
+			args = append(args, "src", r.Src.String())
 		}
 		args = append(args, "table", r.Table, "proto", RouteProto)
 		if _, err := m.R.Run("ip", args...); err != nil {
