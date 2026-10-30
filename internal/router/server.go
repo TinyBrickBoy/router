@@ -121,6 +121,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/neighbors/{fam}/{id}/delete", a(s.neighborDelete))
 	mux.HandleFunc("POST /settings/neighbors/{fam}/{id}", a(s.neighborEdit))
 	mux.HandleFunc("POST /settings/wireguard", a(s.settingsWireGuard))
+	mux.HandleFunc("POST /settings/gre", a(s.greAdd))
+	mux.HandleFunc("POST /settings/gre/{id}/delete", a(s.greDelete))
+	mux.HandleFunc("POST /settings/gre/{id}", a(s.greEdit))
 	mux.HandleFunc("POST /settings/system", a(s.settingsSystem))
 	mux.HandleFunc("POST /settings/rpki", a(s.settingsRPKI))
 	mux.HandleFunc("POST /settings/oidc", a(s.settingsOIDC))
@@ -919,6 +922,13 @@ func parseNeighbor(r *http.Request, v6 bool, old *store.Neighbor) (store.Neighbo
 		}
 		n.SourceAddress = src.String()
 	}
+	n.Prepend = 0
+	if v := strings.TrimSpace(r.FormValue("prepend")); v != "" {
+		if n.Prepend, err = atoi(v); err != nil || n.Prepend < 0 || n.Prepend > maxPrepend {
+			return n, fmt.Errorf("prepend muss zwischen 0 und %d liegen", maxPrepend)
+		}
+	}
+	n.ExportNone = r.FormValue("export_none") != ""
 	return n, nil
 }
 
@@ -1062,6 +1072,9 @@ func (s *Server) settingsWireGuard(w http.ResponseWriter, r *http.Request) {
 		if !ifaceName(iface) {
 			return fmt.Errorf("ungültiger interface name")
 		}
+		if greInUse(st, iface) {
+			return fmt.Errorf("interface %s ist ein gre tunnel", iface)
+		}
 		port, err := atoi(r.FormValue("listen_port"))
 		if err != nil || port < 1 || port > 65535 {
 			return fmt.Errorf("ungültiger port")
@@ -1125,6 +1138,9 @@ func (s *Server) settingsSystem(w http.ResponseWriter, r *http.Request) {
 		d := strings.TrimSpace(r.FormValue("dummy_interface"))
 		if !ifaceName(d) {
 			return fmt.Errorf("ungültiger interface name")
+		}
+		if greInUse(st, d) {
+			return fmt.Errorf("interface %s ist ein gre tunnel", d)
 		}
 		sys.DummyInterface = d
 		sys.ManageBird = r.FormValue("manage_bird") != ""

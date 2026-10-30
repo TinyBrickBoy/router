@@ -102,6 +102,30 @@ Per prefix you can set under **Präfixe**:
 
 As soon as a prefix of an address family uses one of these options, BIRD gets an export filter for that family which keeps the RPKI check and sets the attributes per prefix.
 
+Per neighbor (under **Einstellungen → IPv4 / IPv6**, edit the neighbor):
+
+- **Prepend** (0 to 10): additional prepends towards this neighbor only, on top of the per-prefix ones
+- **Nur Session, nichts ankündigen** (session only): the BGP session comes up but nothing is exported (`export none`)
+
+Neighbors without these options keep the shared export of their family, so their BIRD config stays exactly the same.
+
+## GRE tunnels
+
+Under **Einstellungen → GRE-Tunnel** you can add GRE tunnels, e.g. to a DDoS protection provider: interface name, local and remote IPv4, own tunnel address with prefix length (e.g. `100.64.0.5/31`) and MTU (default 1476).
+
+- The tunnel is created and kept up (`rp_filter` loose on the tunnel). An existing interface with the same name, local and remote address (e.g. created by hand) is adopted without being recreated, so there is no flap. Only a change of local or remote address recreates the link.
+- Tunnels managed by the router carry the interface alias `bgp-router`. Removing a tunnel in the web interface deletes exactly that interface; GRE interfaces without the alias are never touched.
+- MSS clamping for TCP SYN in both directions lives in the nftables table `ip bgp_router_gre`.
+- **Reply Routing**: connections that arrive through the tunnel get a conntrack mark (bits `0x00f00000`, one value per tunnel). Replies of these connections, from the backends via WireGuard or from the router itself, get the mark as fwmark and are routed by `ip rule priority 10100 fwmark <mark>/0xf00000 lookup 210<n>` into a table whose default route points into the tunnel. Everything else, in particular traffic that came in via the normal interface, keeps using the main table. Disabling it removes rule, route and nft rules again.
+
+The BGP session over the tunnel is an ordinary neighbor: the provider's tunnel address as neighbor, your own tunnel address as source address and multihop 0.
+
+Zero downtime migration to a new upstream through a tunnel:
+
+1. Add the GRE tunnel (with reply routing) and the new neighbor with **Nur Session, nichts ankündigen**. Check that the session is established.
+2. Remove *session only* from the new neighbor and set **Prepend** (e.g. 3) on the old upstream's neighbors. Both announce, traffic shifts to the tunnel.
+3. Once traffic arrives through the tunnel, set the old neighbors to *session only* (withdraw) and later delete them.
+
 ## RPKI
 
 - **Präfixe → RPKI prüfen** (check RPKI): asks RIPEstat whether a valid ROA exists for every prefix with your ASN (valid, invalid or unknown, including the ROAs in the tooltip)

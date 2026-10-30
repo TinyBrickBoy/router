@@ -127,7 +127,8 @@ type Route struct {
 	Type  string // unicast, unreachable, local
 	Dst   netip.Prefix
 	Dev   string
-	Table string // main, local oder Nummer
+	Via   netip.Addr // optionales Gateway
+	Table string     // main, local oder Nummer
 }
 
 func (r Route) norm() Route {
@@ -209,6 +210,9 @@ func (m *Manager) SyncRoutes(desired []Route) error {
 			args = append(args, r.Type)
 		}
 		args = append(args, r.Dst.String())
+		if r.Via.IsValid() {
+			args = append(args, "via", r.Via.String())
+		}
 		if r.Dev != "" {
 			args = append(args, "dev", r.Dev)
 		}

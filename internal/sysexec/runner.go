@@ -17,6 +17,8 @@ type Runner struct {
 	Logger *log.Logger
 	// Verbose protokolliert auch ausgeführte Befehle.
 	Verbose bool
+	// Exec ersetzt das Ausführen von Befehlen (für Tests), nil = echte Befehle.
+	Exec func(name string, args ...string) (string, error)
 }
 
 func (r *Runner) logf(format string, args ...any) {
@@ -49,6 +51,9 @@ func (r *Runner) Query(name string, args ...string) (string, error) {
 }
 
 func (r *Runner) exec(name string, args ...string) (string, error) {
+	if r.Exec != nil {
+		return r.Exec(name, args...)
+	}
 	cmd := exec.Command(name, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

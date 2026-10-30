@@ -37,6 +37,7 @@ type Settings struct {
 	IPv4      FamilySettings `json:"ipv4"`
 	IPv6      FamilySettings `json:"ipv6"`
 	WireGuard WGSettings     `json:"wireguard"`
+	GRE       []GRETunnel    `json:"gre"`
 	System    SystemSettings `json:"system"`
 	Update    UpdateSettings `json:"update"`
 	RPKI      RPKISettings   `json:"rpki"`
@@ -94,6 +95,31 @@ type Neighbor struct {
 	Password      string `json:"password"`
 	Multihop      int    `json:"multihop"`
 	SourceAddress string `json:"source_address"`
+	// Traffic Engineering pro Neighbor: zusätzliches AS Path Prepending bzw. gar
+	// nichts ankündigen (nur Session, z.B. beim Umzug zu einem neuen Upstream).
+	Prepend    int  `json:"prepend,omitempty"`
+	ExportNone bool `json:"export_none,omitempty"`
+}
+
+// GREDefaultMTU passt zu GRE über eine Strecke mit MTU 1500 (20 Byte IP + 4 Byte GRE).
+const GREDefaultMTU = 1476
+
+// GREMaxTunnels begrenzt die Anzahl der GRE Tunnel (ein Mark Slot pro Tunnel).
+const GREMaxTunnels = 15
+
+// GRETunnel ist ein GRE Tunnel (IPv4), z.B. zu einem DDoS Schutz Anbieter.
+type GRETunnel struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`    // Interface Name
+	Local   string `json:"local"`   // eigene öffentliche IPv4
+	Remote  string `json:"remote"`  // IPv4 der Gegenstelle
+	Address string `json:"address"` // eigene Tunneladresse mit Präfixlänge, z.B. 100.64.0.5/31
+	MTU     int    `json:"mtu"`
+	// ReplyRouting schickt Antworten auf Verbindungen, die über den Tunnel
+	// ankommen, auch wieder durch den Tunnel zurück.
+	ReplyRouting bool `json:"reply_routing"`
+	// Slot (1..GREMaxTunnels) bestimmt Mark und Routing Tabelle und bleibt fest.
+	Slot int `json:"slot"`
 }
 
 type WGSettings struct {
@@ -281,6 +307,20 @@ func (st *State) Backend(id string) *Backend {
 		}
 	}
 	return nil
+}
+
+// FreeGRESlot liefert den kleinsten freien Slot für einen neuen GRE Tunnel.
+func (st *State) FreeGRESlot() (int, error) {
+	used := map[int]bool{}
+	for _, g := range st.Settings.GRE {
+		used[g.Slot] = true
+	}
+	for i := 1; i <= GREMaxTunnels; i++ {
+		if !used[i] {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("maximal %d GRE Tunnel möglich", GREMaxTunnels)
 }
 
 // User sucht einen lokalen Benutzer (inklusive Hauptbenutzer) per Name.
