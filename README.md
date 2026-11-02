@@ -86,6 +86,7 @@ Neighbors, prefixes, assignments and backend names can be edited in place. Every
 - WireGuard tunnel to the VPS with `PersistentKeepalive`, so it also works behind NAT
 - Assigned IPs are configured locally just like on the VPS (dummy `bgp0` or AnyIP)
 - Policy routing: `ip rule from <assigned network> lookup 51820` → default route through the tunnel. Replies and outgoing connections of these IPs therefore go through the VPS. The backend's normal internet connection stays unchanged.
+- The router's own prefixes are routed through the tunnel (main table, source = an assigned IP from that prefix). Backends reach the other backends' IPs even when their normal network does not route the prefix, e.g. a backend in the same data center after the announcement moved to another upstream. A prefix containing the WireGuard endpoint is skipped. Disable with `"disable_prefix_routes": true` in `/etc/bgp-agent/config.json`.
 - `rp_filter` is relaxed for the tunnel
 - The last config is cached. After a reboot without a connection to the router the tunnel still comes up.
 

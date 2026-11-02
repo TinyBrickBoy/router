@@ -49,6 +49,8 @@ type Config struct {
 	ReplyMark uint32 `json:"reply_mark"`
 	// DisableReplyMark schaltet diese Markierung ab.
 	DisableReplyMark bool `json:"disable_reply_mark"`
+	// DisablePrefixRoutes schaltet die Routen zu den Präfixen des Routers über den Tunnel ab.
+	DisablePrefixRoutes bool `json:"disable_prefix_routes"`
 }
 
 // LoadConfig liest die Konfiguration und setzt Standardwerte.
@@ -240,6 +242,12 @@ func validateConfig(cfg *api.AgentConfig) error {
 			return fmt.Errorf("ungültige tunnel adresse %q", t)
 		}
 	}
+	for _, r := range cfg.Prefixes {
+		p, err := netip.ParsePrefix(r)
+		if err != nil || (p.Addr().Is4() && p.Bits() < 8) || (p.Addr().Is6() && p.Bits() < 16) {
+			return fmt.Errorf("ungültiges präfix %q", r)
+		}
+	}
 	for _, r := range cfg.Routes {
 		p, err := netip.ParsePrefix(r)
 		// niemals eine Default Route oder riesige Netze über den Tunnel lokal registrieren
@@ -324,6 +332,16 @@ func (a *Agent) apply(cfg api.AgentConfig) error {
 	if has6 {
 		routes = append(routes, netcfg.Route{Dst: netip.MustParsePrefix("::/0"), Dev: c.Interface, Table: table})
 	}
+	if !c.DisablePrefixRoutes && len(cfg.Prefixes) > 0 {
+		endpoints, err := endpointAddrs(cfg.Endpoint)
+		if err != nil {
+			// ohne die Adressen des Endpoints könnte eine Präfix Route den
+			// Tunnel selbst umleiten: dann lieber gar keine Präfix Routen
+			add("präfix routen", err)
+		} else {
+			routes = append(routes, prefixRoutes(cfg.Prefixes, endpoints, nets, c.Interface)...)
+		}
+	}
 	add("routen", m.SyncRoutes(routes))
 	add("policy rules", m.SyncRules(c.RulePriority, rules))
 	// Antworten, die nicht von unseren IPs stammen (Docker DNAT), über die
@@ -332,6 +350,90 @@ func (a *Agent) apply(cfg api.AgentConfig) error {
 	add("reply mark", m.SyncReplyMark("iptables", c.Interface, c.ReplyMark, table, c.RulePriority-1, replyOn && has4))
 	add("reply mark", m.SyncReplyMark("ip6tables", c.Interface, c.ReplyMark, table, c.RulePriority-1, replyOn && has6))
 	return errors.Join(errs...)
+}
+
+// endpointAddrs liefert die Adressen des WireGuard Endpoints. Ein Hostname
+// wird aufgelöst, damit auch dann kein Präfix den Tunnel umleitet.
+func endpointAddrs(endpoint string) ([]netip.Addr, error) {
+	if endpoint == "" {
+		return nil, nil
+	}
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("ungültiger endpoint %q: %w", endpoint, err)
+	}
+	if a, err := netip.ParseAddr(host); err == nil {
+		return []netip.Addr{a.Unmap()}, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("endpoint %q auflösen: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("endpoint %q hat keine adressen", host)
+	}
+	out := make([]netip.Addr, 0, len(ips))
+	for _, a := range ips {
+		out = append(out, a.Unmap())
+	}
+	return out, nil
+}
+
+// prefixRoutes leitet die Präfixe des Routers über den Tunnel. Sonst gingen
+// Verbindungen zu anderen Backends übers normale Netz, das die Präfixe nicht
+// (mehr) zu uns routet. Absender ist eine eigene Adresse aus dem Präfix, damit
+// die Antwort ebenfalls durch den Tunnel zurückkommt. own sind die zugewiesenen
+// Netze, einzelne IPs genauso wie Subnetze.
+func prefixRoutes(prefixes []string, endpoints []netip.Addr, own []netip.Prefix, dev string) []netcfg.Route {
+	var routes []netcfg.Route
+	for _, s := range prefixes {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			continue
+		}
+		p = p.Masked()
+		// der Tunnel selbst muss weiter übers normale Netz laufen
+		if containsAny(p, endpoints) {
+			continue
+		}
+		r := netcfg.Route{Dst: p, Dev: dev, Table: "main", Src: sourceAddr(p, own)}
+		routes = append(routes, r)
+	}
+	return routes
+}
+
+func containsAny(p netip.Prefix, addrs []netip.Addr) bool {
+	for _, a := range addrs {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// sourceAddr wählt eine eigene Adresse innerhalb von p. Einzelne IPs haben
+// Vorrang. Ein Subnetz liegt nur als AnyIP Route vor, dort nehmen wir die
+// erste Host Adresse (bei /31, /32, /127 und /128 die Netzadresse selbst).
+func sourceAddr(p netip.Prefix, own []netip.Prefix) netip.Addr {
+	var subnet netip.Addr
+	for _, o := range own {
+		o = o.Masked()
+		if !p.Overlaps(o) || o.Bits() < p.Bits() {
+			continue
+		}
+		if o.IsSingleIP() {
+			return o.Addr()
+		}
+		if !subnet.IsValid() {
+			subnet = o.Addr()
+			if o.Addr().BitLen()-o.Bits() > 1 {
+				subnet = subnet.Next()
+			}
+		}
+	}
+	return subnet
 }
 
 func (a *Agent) selfUpdate(u *api.Update) error {

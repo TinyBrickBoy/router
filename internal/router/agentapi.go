@@ -123,6 +123,9 @@ func (s *Server) agentSync(w http.ResponseWriter, r *http.Request) {
 			cfg.Routes = append(cfg.Routes, as.CIDR)
 		}
 	}
+	for _, p := range st.Prefixes {
+		cfg.Prefixes = append(cfg.Prefixes, p.CIDR)
+	}
 	if distErr == nil && !upToDate && (b.UpdateRequested || st.Settings.Update.AutoUpdateAgents) {
 		cfg.Update = &api.Update{URL: "/download/" + agentFile(req.Arch), SHA256: wantSHA}
 	}
